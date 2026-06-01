@@ -92,19 +92,19 @@ export default function LibraryPage() {
   return (
     <div>
       <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>Library</h1>
-      <p style={{ color: "#8a8aa0", marginBottom: 16, lineHeight: 1.6 }}>
+      <p style={{ color: "var(--fg-muted)", marginBottom: 16, lineHeight: 1.6 }}>
         Every run you've saved to Google Drive. AI uses this library to find clips it can reuse
         when you start a new run with similar scenes.
       </p>
 
-      {loading && <div style={{ color: "#8a8aa0" }}>Loading…</div>}
+      {loading && <div style={{ color: "var(--fg-muted)" }}>Loading…</div>}
 
       {!loading && drive && !drive.connected && (
-        <div className="card" style={{ borderColor: "#3a3a4a" }}>
-          <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: "#ffce4d" }}>
+        <div className="card" style={{ borderColor: "var(--border-strong)" }}>
+          <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6, color: "var(--warning)" }}>
             ⚠ Google Drive is not connected
           </div>
-          <p style={{ color: "#8a8aa0", fontSize: 13, marginBottom: 10, lineHeight: 1.5 }}>
+          <p style={{ color: "var(--fg-muted)", fontSize: 13, marginBottom: 10, lineHeight: 1.5 }}>
             Connect your Google account in Settings — saved runs will appear here automatically.
           </p>
           <a className="btn" href="/settings">
@@ -115,12 +115,12 @@ export default function LibraryPage() {
 
       {!loading && drive?.connected && error && (
         <div className="card" style={{ borderColor: "#5a3a3a", marginBottom: 12 }}>
-          <div style={{ color: "#ff6d6d", fontWeight: 600, fontSize: 13 }}>
+          <div style={{ color: "var(--danger)", fontWeight: 600, fontSize: 13 }}>
             ❌ Couldn't load library
           </div>
           <div
             style={{
-              color: "#9090a8",
+              color: "var(--fg-muted)",
               fontSize: 11,
               marginTop: 6,
               fontFamily: "ui-monospace, monospace",
@@ -135,7 +135,7 @@ export default function LibraryPage() {
       {!loading && drive?.connected && !error && runs && runs.length === 0 && (
         <div className="card">
           <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6 }}>📭 Library is empty</div>
-          <p style={{ color: "#8a8aa0", fontSize: 13, lineHeight: 1.5 }}>
+          <p style={{ color: "var(--fg-muted)", fontSize: 13, lineHeight: 1.5 }}>
             Run the pipeline — finished runs auto-upload to Drive (if you toggled
             "Auto-upload finished runs to Drive" in Settings). Each new run shows up here.
           </p>
@@ -152,7 +152,7 @@ export default function LibraryPage() {
               onChange={(e) => setQuery(e.target.value)}
               style={{ maxWidth: 380, flex: 1 }}
             />
-            <span style={{ color: "#8a8aa0", fontSize: 13 }}>
+            <span style={{ color: "var(--fg-muted)", fontSize: 13 }}>
               {filtered.length === runs.length
                 ? `${runs.length} run${runs.length === 1 ? "" : "s"}`
                 : `${filtered.length} of ${runs.length} runs`}
@@ -177,7 +177,7 @@ export default function LibraryPage() {
                       <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
                         {r.run_title || r.folder_name}
                       </div>
-                      <div style={{ color: "#8a8aa0", fontSize: 12 }}>
+                      <div style={{ color: "var(--fg-muted)", fontSize: 12 }}>
                         {r.created_at && (
                           <span>
                             {new Date(r.created_at).toLocaleString()} ·{" "}
@@ -220,7 +220,7 @@ export default function LibraryPage() {
                       style={{
                         marginTop: 12,
                         paddingTop: 10,
-                        borderTop: "1px solid #232334",
+                        borderTop: "1px solid var(--border)",
                         display: "grid",
                         gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
                         gap: 10,
@@ -230,8 +230,8 @@ export default function LibraryPage() {
                         <div
                           key={c.drive_file_id}
                           style={{
-                            background: "#0f0f17",
-                            border: "1px solid #232334",
+                            background: "var(--field)",
+                            border: "1px solid var(--border)",
                             borderRadius: 8,
                             padding: 10,
                           }}
@@ -239,14 +239,14 @@ export default function LibraryPage() {
                           <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>
                             Scene {c.index}
                             {c.audio_duration_sec != null && c.audio_duration_sec > 0 && (
-                              <span style={{ color: "#8a8aa0", marginLeft: 6, fontWeight: 400 }}>
+                              <span style={{ color: "var(--fg-muted)", marginLeft: 6, fontWeight: 400 }}>
                                 {c.audio_duration_sec.toFixed(1)}s audio
                               </span>
                             )}
                           </div>
                           <div
                             style={{
-                              color: "#b8b8c8",
+                              color: "var(--fg)",
                               fontSize: 11,
                               lineHeight: 1.5,
                               marginBottom: 6,
@@ -258,7 +258,7 @@ export default function LibraryPage() {
                           </div>
                           <div
                             style={{
-                              color: "#7c5cff",
+                              color: "var(--accent)",
                               fontSize: 10,
                               fontFamily: "ui-monospace, monospace",
                               marginBottom: 8,
@@ -273,7 +273,7 @@ export default function LibraryPage() {
                             href={c.drive_file_link}
                             target="_blank"
                             rel="noopener noreferrer"
-                            style={{ color: "#7c5cff", fontSize: 11 }}
+                            style={{ color: "var(--accent)", fontSize: 11 }}
                           >
                             Open clip in Drive →
                           </a>

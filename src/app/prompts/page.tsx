@@ -56,7 +56,7 @@ export default function PromptsPage() {
   return (
     <div>
       <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>Prompts</h1>
-      <p style={{ color: "#8a8aa0", marginBottom: 16, lineHeight: 1.6 }}>
+      <p style={{ color: "var(--fg-muted)", marginBottom: 16, lineHeight: 1.6 }}>
         These are the system prompts that drive how the LLM splits scripts and what visual style the
         image/video generators produce. Changes take effect on the next run — no restart needed.
       </p>
@@ -66,7 +66,7 @@ export default function PromptsPage() {
       {META.map((m) => (
         <div key={m.name} className="card" style={{ marginBottom: 14 }}>
           <h3 style={{ fontWeight: 700, marginBottom: 4 }}>{m.label}</h3>
-          <p style={{ color: "#9090a8", fontSize: 13, marginBottom: 10, lineHeight: 1.5 }}>{m.help}</p>
+          <p style={{ color: "var(--fg-muted)", fontSize: 13, marginBottom: 10, lineHeight: 1.5 }}>{m.help}</p>
           <textarea
             className="textarea"
             rows={m.rows}

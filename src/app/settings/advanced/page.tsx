@@ -333,10 +333,10 @@ export default function AdvancedSettingsPage() {
   return (
     <div>
       <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>Advanced settings</h1>
-      <p style={{ color: "#8a8aa0", marginBottom: 16, lineHeight: 1.6 }}>
+      <p style={{ color: "var(--fg-muted)", marginBottom: 16, lineHeight: 1.6 }}>
         Tuning knobs for the pipeline. The defaults are already good for most cases — touch these only
         if you know what you're doing.{" "}
-        <Link href="/settings" style={{ color: "#7c5cff" }}>← Back to Keys &amp; Drive</Link>
+        <Link href="/settings" style={{ color: "var(--accent)" }}>← Back to Keys &amp; Drive</Link>
       </p>
 
       <div
@@ -362,7 +362,7 @@ export default function AdvancedSettingsPage() {
           className="card"
           style={{
             marginBottom: 14,
-            background: "linear-gradient(90deg, #14141d, #1a1a28)",
+            background: "linear-gradient(90deg, var(--surface), #1a1a28)",
             borderColor: stats.keyCount >= 2 ? "#3a5a3a" : undefined,
           }}
         >
@@ -371,18 +371,18 @@ export default function AdvancedSettingsPage() {
               <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>
                 ⚡ Current parallel capacity
                 {stats.keyCount >= 2 && (
-                  <span style={{ marginLeft: 8, color: "#6dd66d", fontSize: 12 }}>
+                  <span style={{ marginLeft: 8, color: "var(--success)", fontSize: 12 }}>
                     × {stats.keyCount} keys
                   </span>
                 )}
               </div>
-              <div style={{ color: "#9090a8", fontSize: 13, lineHeight: 1.6 }}>
-                <strong style={{ color: "#e8e8f0" }}>{stats.total.image}</strong> image jobs ·{" "}
-                <strong style={{ color: "#e8e8f0" }}>{stats.total.anim}</strong> video jobs ·{" "}
-                <strong style={{ color: "#e8e8f0" }}>{stats.total.tts}</strong> TTS jobs running at once
+              <div style={{ color: "var(--fg-muted)", fontSize: 13, lineHeight: 1.6 }}>
+                <strong style={{ color: "var(--fg)" }}>{stats.total.image}</strong> image jobs ·{" "}
+                <strong style={{ color: "var(--fg)" }}>{stats.total.anim}</strong> video jobs ·{" "}
+                <strong style={{ color: "var(--fg)" }}>{stats.total.tts}</strong> TTS jobs running at once
               </div>
             </div>
-            <div style={{ color: "#5a5a70", fontSize: 11, textAlign: "right" }}>
+            <div style={{ color: "var(--fg-faint)", fontSize: 11, textAlign: "right" }}>
               FFmpeg: {stats.assembleConcurrency} parallel clips
               <br />
               xfade chunks: {stats.xfadeChunks}

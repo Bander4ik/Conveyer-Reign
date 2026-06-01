@@ -170,7 +170,7 @@ export default function NewRunPage() {
   return (
     <div>
       <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>New run</h1>
-      <p style={{ color: "#8a8aa0", marginBottom: 16 }}>
+      <p style={{ color: "var(--fg-muted)", marginBottom: 16 }}>
         Paste a script — the system will split it into scenes, generate voiceover and imagery for
         each, then assemble the final video.
       </p>
@@ -194,20 +194,20 @@ export default function NewRunPage() {
             onChange={(e) => setScript(e.target.value)}
             placeholder="Paste the full script here..."
           />
-          <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 13, color: "#8a8aa0", flexWrap: "wrap" }}>
-            <span><strong style={{ color: "#e8e8f0" }}>{scriptStats.words}</strong> words</span>
-            <span><strong style={{ color: "#e8e8f0" }}>{scriptStats.chars}</strong> chars</span>
-            <span>≈ <strong style={{ color: "#7c5cff" }}>{scriptStats.duration}</strong> of final video</span>
-            <span>≈ <strong style={{ color: "#e8e8f0" }}>{scriptStats.scenes}</strong> scenes</span>
+          <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 13, color: "var(--fg-muted)", flexWrap: "wrap" }}>
+            <span><strong style={{ color: "var(--fg)" }}>{scriptStats.words}</strong> words</span>
+            <span><strong style={{ color: "var(--fg)" }}>{scriptStats.chars}</strong> chars</span>
+            <span>≈ <strong style={{ color: "var(--accent)" }}>{scriptStats.duration}</strong> of final video</span>
+            <span>≈ <strong style={{ color: "var(--fg)" }}>{scriptStats.scenes}</strong> scenes</span>
           </div>
         </div>
-        <div style={{ borderTop: "1px solid #2a2a3a", paddingTop: 12 }}>
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
             <div>
               <label className="label" style={{ marginBottom: 2 }}>
-                Characters <span style={{ color: "#8a8aa0", fontWeight: 400 }}>(optional)</span>
+                Characters <span style={{ color: "var(--fg-muted)", fontWeight: 400 }}>(optional)</span>
               </label>
-              <p style={{ color: "#8a8aa0", fontSize: 13, margin: 0 }}>
+              <p style={{ color: "var(--fg-muted)", fontSize: 13, margin: 0 }}>
                 People that should look the same every time they appear — a host, or the person the
                 video is about. Upload a photo or describe them; the rest stays b-roll.
               </p>
@@ -215,7 +215,7 @@ export default function NewRunPage() {
             <button
               type="button"
               onClick={addCharacter}
-              style={{ background: "#23233a", border: "1px solid #3a3a4a", color: "#e8e8f0", borderRadius: 8, padding: "8px 12px", cursor: "pointer", whiteSpace: "nowrap" }}
+              style={{ background: "var(--border)", border: "1px solid var(--border-strong)", color: "var(--fg)", borderRadius: 8, padding: "8px 12px", cursor: "pointer", whiteSpace: "nowrap" }}
             >
               + Add character
             </button>
@@ -224,7 +224,7 @@ export default function NewRunPage() {
           {characters.length > 0 && (
             <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
               {characters.map((c) => (
-                <div key={c.id} style={{ border: "1px solid #2a2a3a", borderRadius: 8, padding: 10, display: "grid", gap: 8 }}>
+                <div key={c.id} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 10, display: "grid", gap: 8 }}>
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <input
                       className="input"
@@ -233,7 +233,7 @@ export default function NewRunPage() {
                       value={c.name}
                       onChange={(e) => updateCharacter(c.id, { name: e.target.value })}
                     />
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#c8c8d8", whiteSpace: "nowrap" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--fg)", whiteSpace: "nowrap" }}>
                       <input
                         type="checkbox"
                         checked={c.isHost}
@@ -254,7 +254,7 @@ export default function NewRunPage() {
                     <button
                       type="button"
                       onClick={() => removeCharacter(c.id)}
-                      style={{ background: "transparent", border: "1px solid #3a3a4a", color: "#ff8888", borderRadius: 6, padding: "8px 10px", cursor: "pointer" }}
+                      style={{ background: "transparent", border: "1px solid var(--border-strong)", color: "var(--danger)", borderRadius: 6, padding: "8px 10px", cursor: "pointer" }}
                     >
                       Remove
                     </button>
@@ -304,48 +304,48 @@ export default function NewRunPage() {
           className="card"
           style={{
             marginTop: 16,
-            background: "linear-gradient(90deg, #14141d, #1a1a28)",
+            background: "linear-gradient(90deg, var(--surface), #1a1a28)",
             borderColor: stats.keyCount >= 2 ? "#3a5a3a" : undefined,
           }}
         >
           <div style={{ fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", gap: 10 }}>
             ⏱️ Estimated generation time
-            <span style={{ color: "#7c5cff", fontSize: 18 }}>
+            <span style={{ color: "var(--accent)", fontSize: 18 }}>
               ~{timeEstimate.total < 1 ? "<1" : Math.round(timeEstimate.total)} min
             </span>
           </div>
-          <div style={{ color: "#9090a8", fontSize: 13, lineHeight: 1.7 }}>
+          <div style={{ color: "var(--fg-muted)", fontSize: 13, lineHeight: 1.7 }}>
             <div>
-              <strong style={{ color: "#e8e8f0" }}>Parallel generation</strong> (TTS + images
+              <strong style={{ color: "var(--fg)" }}>Parallel generation</strong> (TTS + images
               {stats.animationEnabled ? ` + ${timeEstimate.animScenes} video clips` : ""}):
               ~{Math.round(timeEstimate.phase1)} min
-              <span style={{ color: "#5a5a70", marginLeft: 8 }}>
+              <span style={{ color: "var(--fg-faint)", marginLeft: 8 }}>
                 with {stats.keyCount} {stats.keyCount === 1 ? "key" : "keys"} ({stats.total.image} img / {stats.total.anim} vid / {stats.total.tts} TTS in parallel)
               </span>
             </div>
             <div>
-              <strong style={{ color: "#e8e8f0" }}>FFmpeg clip render</strong>:
+              <strong style={{ color: "var(--fg)" }}>FFmpeg clip render</strong>:
               ~{Math.round(timeEstimate.phase2 * 10) / 10} min
-              <span style={{ color: "#5a5a70", marginLeft: 8 }}>
+              <span style={{ color: "var(--fg-faint)", marginLeft: 8 }}>
                 {stats.assembleConcurrency} clips at once
               </span>
             </div>
             <div>
-              <strong style={{ color: "#e8e8f0" }}>Final xfade assembly</strong>:
+              <strong style={{ color: "var(--fg)" }}>Final xfade assembly</strong>:
               ~{Math.round(timeEstimate.phase3 * 10) / 10} min
-              <span style={{ color: "#5a5a70", marginLeft: 8 }}>
+              <span style={{ color: "var(--fg-faint)", marginLeft: 8 }}>
                 {stats.xfadeChunks} parallel chunks
               </span>
             </div>
           </div>
           {stats.keyCount === 1 && scriptStats.scenes > 30 && (
-            <div style={{ color: "#ffce4d", fontSize: 12, marginTop: 10, padding: 8, background: "#2a2010", borderRadius: 6 }}>
+            <div style={{ color: "var(--warning)", fontSize: 12, marginTop: 10, padding: 8, background: "#2a2010", borderRadius: 6 }}>
               💡 You're running on a single 69labs key. Adding a 2nd key would cut the generation
               phase roughly in half (estimated ~{Math.round(timeEstimate.total / 2)} min instead of ~{Math.round(timeEstimate.total)} min).
-              Paste extra keys in <a href="/settings" style={{ color: "#7c5cff" }}>Keys &amp; Settings</a> → Required API Keys.
+              Paste extra keys in <a href="/settings" style={{ color: "var(--accent)" }}>Keys &amp; Settings</a> → Required API Keys.
             </div>
           )}
-          <div style={{ color: "#5a5a70", fontSize: 11, marginTop: 8 }}>
+          <div style={{ color: "var(--fg-faint)", fontSize: 11, marginTop: 8 }}>
             Numbers are rough — real runs are usually 10–30% faster. Heavy CPU usage during the
             assembly phase; weak machines may want to lower ASSEMBLE_CONCURRENCY or
             ASSEMBLE_XFADE_CHUNKS in Settings.
@@ -361,7 +361,7 @@ export default function NewRunPage() {
           <li>Selected scenes get a Veo img2vid clip on top of the still image.</li>
           <li>FFmpeg stitches all clips together with crossfade transitions.</li>
         </ol>
-        <p style={{ color: "#8a8aa0", fontSize: 13, marginTop: 8 }}>
+        <p style={{ color: "var(--fg-muted)", fontSize: 13, marginTop: 8 }}>
           Live logs for every stage stream into the run page in real time.
         </p>
       </div>

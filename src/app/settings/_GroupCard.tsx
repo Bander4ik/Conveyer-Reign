@@ -32,7 +32,7 @@ export function GroupCard(props: {
       className="card"
       style={{
         marginBottom: 14,
-        borderColor: g.required ? "#ff6d6d" : undefined,
+        borderColor: g.required ? "var(--danger)" : undefined,
         borderWidth: g.required ? 2 : 1,
       }}
     >
@@ -42,7 +42,7 @@ export function GroupCard(props: {
           <span
             style={{
               background: "#3a1d1d",
-              color: "#ff6d6d",
+              color: "var(--danger)",
               padding: "2px 8px",
               borderRadius: 999,
               fontSize: 11,
@@ -55,7 +55,7 @@ export function GroupCard(props: {
         )}
       </div>
       {g.subtitle && (
-        <p style={{ color: "#8a8aa0", fontSize: 13, marginBottom: 14, lineHeight: 1.5 }}>
+        <p style={{ color: "var(--fg-muted)", fontSize: 13, marginBottom: 14, lineHeight: 1.5 }}>
           {g.subtitle}
         </p>
       )}
@@ -67,7 +67,7 @@ export function GroupCard(props: {
                 className="label"
                 style={{
                   margin: 0,
-                  color: f.required ? "#ff8888" : "#b8b8c8",
+                  color: f.required ? "var(--danger)" : "var(--fg)",
                   fontWeight: 600,
                   fontSize: 12,
                   letterSpacing: 0.3,
@@ -76,7 +76,7 @@ export function GroupCard(props: {
                 {f.key}
               </label>
               {f.required && (
-                <span style={{ color: "#ff6d6d", fontSize: 10, fontWeight: 700 }}>required</span>
+                <span style={{ color: "var(--danger)", fontSize: 10, fontWeight: 700 }}>required</span>
               )}
             </div>
             {f.multiline ? (
@@ -87,7 +87,7 @@ export function GroupCard(props: {
                 onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
                 rows={Math.max(2, Math.min(6, (values[f.key] ?? "").split(/\n/).length + 1))}
                 style={{
-                  borderColor: f.required && !values[f.key] ? "#ff6d6d" : undefined,
+                  borderColor: f.required && !values[f.key] ? "var(--danger)" : undefined,
                   fontFamily: "ui-monospace, monospace",
                   fontSize: 13,
                 }}
@@ -99,12 +99,12 @@ export function GroupCard(props: {
                 placeholder={f.examples ? `e.g. ${f.examples}` : ""}
                 onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
                 style={{
-                  borderColor: f.required && !values[f.key] ? "#ff6d6d" : undefined,
+                  borderColor: f.required && !values[f.key] ? "var(--danger)" : undefined,
                 }}
               />
             )}
             {f.key === "LABS69_API_KEY" && values[f.key] && (
-              <div style={{ color: "#7c5cff", fontSize: 12, marginTop: 6 }}>
+              <div style={{ color: "var(--accent)", fontSize: 12, marginTop: 6 }}>
                 🔑 Detected{" "}
                 <strong>
                   {values[f.key].split(/[\n,;]+/).map((k) => k.trim()).filter(Boolean).length}
@@ -115,7 +115,7 @@ export function GroupCard(props: {
             )}
             <div
               style={{
-                color: "#9090a8",
+                color: "var(--fg-muted)",
                 fontSize: 12,
                 marginTop: 6,
                 lineHeight: 1.5,
@@ -127,7 +127,7 @@ export function GroupCard(props: {
             {f.examples && (
               <div
                 style={{
-                  color: "#5a5a70",
+                  color: "var(--fg-faint)",
                   fontSize: 11,
                   marginTop: 4,
                   fontFamily: "ui-monospace, monospace",

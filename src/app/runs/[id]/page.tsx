@@ -109,11 +109,11 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 800 }}>{run?.title || `Run ${id.slice(0, 8)}`}</h1>
-          <div style={{ color: "#8a8aa0", fontSize: 12 }}>{id}</div>
+          <div style={{ color: "var(--fg-muted)", fontSize: 12 }}>{id}</div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {(run?.status === "running" || run?.status === "pending") && (
-            <button className="btn-secondary" onClick={cancel} style={{ color: "#ff8888", borderColor: "#3a1d1d" }}>
+            <button className="btn-secondary" onClick={cancel} style={{ color: "var(--danger)", borderColor: "#3a1d1d" }}>
               ⏹ Stop
             </button>
           )}
@@ -126,7 +126,7 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <div>
               <div style={{ fontWeight: 700 }}>🎬 Final video</div>
-              <div style={{ color: "#8a8aa0", fontSize: 12 }}>
+              <div style={{ color: "var(--fg-muted)", fontSize: 12 }}>
                 {(assets.finalSize / (1024 * 1024)).toFixed(2)} MB
               </div>
             </div>
@@ -146,7 +146,7 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
       {run?.status === "error" && assets && assets.scenes.length > 0 && !assets.finalExists && (
         <div className="card" style={{ marginBottom: 12, borderColor: "#3a1d1d" }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>⚠️ Pipeline failed, but assets are saved</div>
-          <p style={{ color: "#8a8aa0", fontSize: 13, marginBottom: 10 }}>
+          <p style={{ color: "var(--fg-muted)", fontSize: 13, marginBottom: 10 }}>
             {assets.scenes.length} scenes already have audio + images on disk. You can fill any gaps and reassemble the final video without re-running the whole pipeline.
           </p>
           <button className="btn" onClick={reassemble} disabled={reassembling}>
@@ -155,13 +155,13 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
         </div>
       )}
 
-      <div className="card" style={{ marginBottom: 12, background: "#07070d", maxHeight: 420, overflowY: "auto", fontFamily: "ui-monospace, monospace", fontSize: 12 }}>
+      <div className="card" style={{ marginBottom: 12, background: "var(--bg-deep)", maxHeight: 420, overflowY: "auto", fontFamily: "ui-monospace, monospace", fontSize: 12 }}>
         <div style={{ fontWeight: 700, marginBottom: 6, fontFamily: "inherit", fontSize: 13 }}>Logs</div>
-        {logs.length === 0 && <div style={{ color: "#8a8aa0" }}>Waiting for logs…</div>}
+        {logs.length === 0 && <div style={{ color: "var(--fg-muted)" }}>Waiting for logs…</div>}
         {logs.map((l, i) => (
           <div key={l.id ?? i} style={{ padding: "2px 0" }}>
-            <span style={{ color: "#5a5a70" }}>{new Date(l.ts).toLocaleTimeString()}</span>{" "}
-            {l.stage && <span style={{ color: "#7c5cff" }}>[{l.stage}]</span>}{" "}
+            <span style={{ color: "var(--fg-faint)" }}>{new Date(l.ts).toLocaleTimeString()}</span>{" "}
+            {l.stage && <span style={{ color: "var(--accent)" }}>[{l.stage}]</span>}{" "}
             <span style={{ color: levelColor(l.level) }}>{l.level.toUpperCase()}</span>{" "}
             <span>{l.message}</span>
           </div>
@@ -174,7 +174,7 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
           <div style={{ fontWeight: 700, marginBottom: 8 }}>Scene assets ({assets.scenes.length})</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
             {assets.scenes.map((s) => (
-              <div key={s.index} style={{ border: "1px solid #232334", borderRadius: 8, padding: 8, background: "#0f0f17" }}>
+              <div key={s.index} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 8, background: "var(--field)" }}>
                 <div style={{ fontWeight: 700, marginBottom: 6 }}>Scene #{s.index}</div>
                 {s.image && (
                   <a href={fileUrl(`images/${s.image.name}`, true)} title="Download image">
@@ -205,10 +205,10 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
 
 function levelColor(l: LogEntry["level"]) {
   switch (l) {
-    case "error": return "#ff6d6d";
-    case "warn": return "#ffce4d";
-    case "success": return "#6dd66d";
-    case "debug": return "#8a8aa0";
-    default: return "#b8b8c8";
+    case "error": return "var(--danger)";
+    case "warn": return "var(--warning)";
+    case "success": return "var(--success)";
+    case "debug": return "var(--fg-muted)";
+    default: return "var(--fg)";
   }
 }

@@ -119,9 +119,9 @@ export default function SettingsPage() {
   return (
     <div>
       <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>Keys &amp; Settings</h1>
-      <p style={{ color: "#8a8aa0", marginBottom: 16, lineHeight: 1.6 }}>
+      <p style={{ color: "var(--fg-muted)", marginBottom: 16, lineHeight: 1.6 }}>
         Required API keys + Google Drive sync. Everything else lives at{" "}
-        <Link href="/settings/advanced" style={{ color: "#7c5cff" }}>Advanced settings →</Link>
+        <Link href="/settings/advanced" style={{ color: "var(--accent)" }}>Advanced settings →</Link>
       </p>
 
       <div
@@ -168,7 +168,7 @@ export default function SettingsPage() {
             OPTIONAL
           </span>
         </div>
-        <p style={{ color: "#8a8aa0", fontSize: 13, marginBottom: 14, lineHeight: 1.5 }}>
+        <p style={{ color: "var(--fg-muted)", fontSize: 13, marginBottom: 14, lineHeight: 1.5 }}>
           Auto-upload finished runs to your Google Drive. Final videos go to one folder, raw scene clips
           (without voiceover) plus a description blob go to another — so AI can later find relevant clips
           from past runs to reuse in new ones.
@@ -187,23 +187,23 @@ export default function SettingsPage() {
                   ? "#2a1a1a"
                   : "#1a1a28",
               border: `1px solid ${
-                gdrive.connected ? "#3a5a3a" : gdrive.error ? "#5a3a3a" : "#2a2a3a"
+                gdrive.connected ? "#3a5a3a" : gdrive.error ? "#5a3a3a" : "var(--border)"
               }`,
             }}
           >
             {gdrive.connected ? (
-              <span style={{ color: "#6dd66d", fontWeight: 600, fontSize: 13 }}>
+              <span style={{ color: "var(--success)", fontWeight: 600, fontSize: 13 }}>
                 ✓ Connected as{" "}
-                <span style={{ color: "#e8e8f0" }}>{gdrive.email || "(unknown email)"}</span>
+                <span style={{ color: "var(--fg)" }}>{gdrive.email || "(unknown email)"}</span>
               </span>
             ) : gdrive.error ? (
               <div>
                 {gdrive.errorKind === "api_not_enabled" ? (
                   <>
-                    <div style={{ color: "#ff6d6d", fontWeight: 600, fontSize: 13 }}>
+                    <div style={{ color: "var(--danger)", fontWeight: 600, fontSize: 13 }}>
                       ❌ Google Drive API is not enabled in your Google Cloud project
                     </div>
-                    <div style={{ color: "#cfcfdf", fontSize: 12, marginTop: 6, lineHeight: 1.6 }}>
+                    <div style={{ color: "var(--fg)", fontSize: 12, marginTop: 6, lineHeight: 1.6 }}>
                       Open the link below, click the blue <strong>Enable</strong> button, wait ~1 min, then refresh this page:
                     </div>
                     {gdrive.enableUrl && (
@@ -212,7 +212,7 @@ export default function SettingsPage() {
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{
-                          color: "#7c5cff",
+                          color: "var(--accent)",
                           fontSize: 12,
                           marginTop: 6,
                           display: "inline-block",
@@ -224,25 +224,25 @@ export default function SettingsPage() {
                     )}
                   </>
                 ) : gdrive.errorKind === "auth_invalid" ? (
-                  <div style={{ color: "#ff6d6d", fontWeight: 600, fontSize: 13 }}>
+                  <div style={{ color: "var(--danger)", fontWeight: 600, fontSize: 13 }}>
                     ❌ Token expired or revoked — click <strong>Reconnect</strong>
                   </div>
                 ) : gdrive.errorKind === "network" ? (
-                  <div style={{ color: "#ffce4d", fontWeight: 600, fontSize: 13 }}>
+                  <div style={{ color: "var(--warning)", fontWeight: 600, fontSize: 13 }}>
                     ⚠ Network error reaching Google — check your connection and refresh
                   </div>
                 ) : (
-                  <div style={{ color: "#ff6d6d", fontWeight: 600, fontSize: 13 }}>
+                  <div style={{ color: "var(--danger)", fontWeight: 600, fontSize: 13 }}>
                     ❌ Drive connection issue — see details below
                   </div>
                 )}
                 <details style={{ marginTop: 8 }}>
-                  <summary style={{ cursor: "pointer", color: "#9090a8", fontSize: 11 }}>
+                  <summary style={{ cursor: "pointer", color: "var(--fg-muted)", fontSize: 11 }}>
                     Raw error
                   </summary>
                   <div
                     style={{
-                      color: "#9090a8",
+                      color: "var(--fg-muted)",
                       fontSize: 11,
                       marginTop: 4,
                       fontFamily: "ui-monospace, monospace",
@@ -254,11 +254,11 @@ export default function SettingsPage() {
                 </details>
               </div>
             ) : gdrive.credentialsConfigured ? (
-              <span style={{ color: "#ffce4d", fontWeight: 600, fontSize: 13 }}>
+              <span style={{ color: "var(--warning)", fontWeight: 600, fontSize: 13 }}>
                 ⚠ Not connected — click <strong>Connect Google Drive</strong> below
               </span>
             ) : (
-              <span style={{ color: "#9090a8", fontWeight: 600, fontSize: 13 }}>
+              <span style={{ color: "var(--fg-muted)", fontWeight: 600, fontSize: 13 }}>
                 ℹ Fill <code>GDRIVE_CLIENT_ID</code> + <code>GDRIVE_CLIENT_SECRET</code> below, click{" "}
                 <strong>Save all changes</strong>, then come back to connect.
               </span>
@@ -276,7 +276,7 @@ export default function SettingsPage() {
               <button
                 className="btn-secondary"
                 onClick={disconnectGdrive}
-                style={{ color: "#ff8888" }}
+                style={{ color: "var(--danger)" }}
               >
                 Disconnect
               </button>
@@ -298,7 +298,7 @@ export default function SettingsPage() {
           style={{
             marginBottom: 14,
             padding: "10px 12px",
-            background: "#0e0e16",
+            background: "var(--bg-deep)",
             borderRadius: 6,
             display: "flex",
             alignItems: "center",
@@ -326,7 +326,7 @@ export default function SettingsPage() {
             />
             <span>Auto-upload finished runs to Drive</span>
           </label>
-          <span style={{ color: "#5a5a70", fontSize: 11 }}>
+          <span style={{ color: "var(--fg-faint)", fontSize: 11 }}>
             Uploads final video + raw clips + metadata after each successful run. Toggle saves with{" "}
             <strong>Save all changes</strong>.
           </span>
@@ -362,7 +362,7 @@ export default function SettingsPage() {
                   className="label"
                   style={{
                     margin: 0,
-                    color: "#b8b8c8",
+                    color: "var(--fg)",
                     fontWeight: 600,
                     fontSize: 12,
                     letterSpacing: 0.3,
@@ -377,12 +377,12 @@ export default function SettingsPage() {
                 placeholder={`e.g. ${f.examples}`}
                 onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
               />
-              <div style={{ color: "#9090a8", fontSize: 12, marginTop: 6, lineHeight: 1.5 }}>
+              <div style={{ color: "var(--fg-muted)", fontSize: 12, marginTop: 6, lineHeight: 1.5 }}>
                 {f.desc}
               </div>
               <div
                 style={{
-                  color: "#5a5a70",
+                  color: "var(--fg-faint)",
                   fontSize: 11,
                   marginTop: 4,
                   fontFamily: "ui-monospace, monospace",
@@ -399,19 +399,19 @@ export default function SettingsPage() {
           style={{
             marginTop: 14,
             padding: 12,
-            background: "#0e0e16",
+            background: "var(--bg-deep)",
             borderRadius: 6,
-            border: "1px solid #2a2a3a",
+            border: "1px solid var(--border)",
           }}
         >
-          <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: 13, color: "#b8b8c8" }}>
+          <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: 13, color: "var(--fg)" }}>
             First-time setup — how to get Client ID / Secret (click to expand)
           </summary>
           <ol
             style={{
               marginTop: 10,
               paddingLeft: 20,
-              color: "#9090a8",
+              color: "var(--fg-muted)",
               fontSize: 12,
               lineHeight: 1.7,
             }}
@@ -422,7 +422,7 @@ export default function SettingsPage() {
                 href="https://console.cloud.google.com/"
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: "#7c5cff" }}
+                style={{ color: "var(--accent)" }}
               >
                 Google Cloud Console
               </a>{" "}
@@ -438,7 +438,7 @@ export default function SettingsPage() {
               <strong>External</strong> → fill the required fields (app name, support email,
               developer email) and save
             </li>
-            <li style={{ color: "#ffce4d" }}>
+            <li style={{ color: "var(--warning)" }}>
               <strong>⚠ DO NOT SKIP — add yourself as a Test user.</strong> In the OAuth consent
               screen, open the <strong>Audience</strong> (or <strong>Test users</strong>) section →
               click <strong>Add users</strong> → type the EXACT Gmail address you will log in with
@@ -488,10 +488,10 @@ export default function SettingsPage() {
               borderRadius: 6,
             }}
           >
-            <div style={{ color: "#ff8888", fontWeight: 700, fontSize: 12, marginBottom: 4 }}>
+            <div style={{ color: "var(--danger)", fontWeight: 700, fontSize: 12, marginBottom: 4 }}>
               ❌ Stuck on &ldquo;Access blocked: ... has not completed the Google verification process&rdquo;?
             </div>
-            <div style={{ color: "#cfcfdf", fontSize: 11.5, lineHeight: 1.6 }}>
+            <div style={{ color: "var(--fg)", fontSize: 11.5, lineHeight: 1.6 }}>
               That &ldquo;Error 403: access_denied&rdquo; means the Gmail you're logging in with is
               NOT in the project's <strong>Test users</strong> list. Go back to Google Cloud Console
               → APIs &amp; Services → OAuth consent screen → Audience / Test users → <strong>Add
@@ -503,7 +503,7 @@ export default function SettingsPage() {
           <p
             style={{
               marginTop: 12,
-              color: "#5a5a70",
+              color: "var(--fg-faint)",
               fontSize: 11,
               lineHeight: 1.6,
               fontStyle: "italic",

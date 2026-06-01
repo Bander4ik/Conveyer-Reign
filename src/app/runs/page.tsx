@@ -29,14 +29,14 @@ export default function RunsListPage() {
   return (
     <div>
       <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 16 }}>Run history</h1>
-      {runs.length === 0 && <p style={{ color: "#8a8aa0" }}>No runs yet.</p>}
+      {runs.length === 0 && <p style={{ color: "var(--fg-muted)" }}>No runs yet.</p>}
       <div style={{ display: "grid", gap: 8 }}>
         {runs.map((r) => (
           <Link key={r.id} href={`/runs/${r.id}`} className="card" style={{ textDecoration: "none" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <div style={{ fontWeight: 700 }}>{r.title || r.id.slice(0, 8)}</div>
-                <div style={{ color: "#8a8aa0", fontSize: 12 }}>{r.created_at}</div>
+                <div style={{ color: "var(--fg-muted)", fontSize: 12 }}>{r.created_at}</div>
               </div>
               <span className={`tag tag-${r.status}`}>{r.status}</span>
             </div>
