@@ -17,11 +17,21 @@ if there's a hidden `.git` folder inside, you used **git**. Otherwise it's a **Z
 
 ---
 
-## What's new in this update — Google Drive sync 🚀
+## What's new in this version
 
-The platform can now auto-upload every finished run to your Google Drive, so
+### Characters — consistent people across scenes 🎭
+
+You can now keep a recurring person — a host, or the subject a video is about — looking
+the same in every scene they appear in. On the **New run** page, open the **Characters**
+box, add a person (upload a photo or describe them), and tick **Host / main** for your
+presenter. Full walkthrough is in [SETUP.md](./SETUP.md). Reminder: your scene-split prompt
+on **/prompts** must allow people (the space default says "no people").
+
+### Google Drive sync 🚀
+
+The platform can also auto-upload every finished run to your Google Drive, so
 your videos and raw scene clips are backed up off your machine and available
-for reuse in future videos. Three things changed in the UI:
+for reuse in future videos. Three things to know:
 
 1. **New sidebar link: "Drive library"** — browse every run you've uploaded to
    Drive, with links to each clip. Empty until you finish a run with Drive

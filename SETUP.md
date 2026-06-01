@@ -245,6 +245,37 @@ way to see it:
 
 You can change this location in **Advanced settings → Storage Location → RUNS_OUTPUT_DIR**.
 
+### Optional: keep a character consistent (a host, or the person the video is about)
+
+Normally each scene's picture is created on its own, so the same person can come out looking
+different from scene to scene. If your video has a **host** on camera, or is **about one
+person** (a specific pirate, a historical figure), you can lock their look so they stay the
+same every time they appear.
+
+On the **New run** page, find the **Characters** box and click **"+ Add character"**:
+
+1. Type the person's **name** (e.g. `Blackbeard`, or `Host`).
+2. Choose how to set their look:
+   - **Describe** — type what they look like (age, face, hair, clothing). The app creates one
+     picture of them and reuses it everywhere.
+   - **Upload photo** — pick an image of the person from your computer.
+   - **Image URL** — paste a link to a picture that's already online.
+3. Tick **"Host / main"** if this is your presenter.
+4. Add more people the same way if the video needs them. You can use a different set of people
+   for each video.
+
+Then click **Run pipeline** as usual — that person now keeps the same face and outfit in every
+scene they appear in.
+
+> **Important — allow people in your prompt first.** The shipped Scene Split prompt is set up
+> for a space channel and literally says "no people", so the app won't put anyone on screen.
+> Before using characters, open **/prompts** and rewrite the Scene Split prompt for your real
+> topic (pirates, history, …) with people allowed. See "Retheme it to your niche" in
+> [README.md](./README.md).
+>
+> Note: the person looks consistent and can have slight motion, but this is **not** a talking
+> avatar — their mouth won't lip-sync to the narration.
+
 ---
 
 ## 6. Optional — connect Google Drive

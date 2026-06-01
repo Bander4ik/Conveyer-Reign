@@ -1,4 +1,4 @@
-# Conveyer
+# Conveyer Reign
 
 A **local pipeline for making faceless AI YouTube videos** — paste a script, get a
 finished MP4: **script → scenes → voiceover + visuals → final video**.
