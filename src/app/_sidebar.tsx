@@ -64,6 +64,16 @@ const NAV: NavItem[] = [
     ),
   },
   {
+    href: "/channels",
+    label: "Channels",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M12 2 2 7l10 5 10-5-10-5z" />
+        <path d="M2 17l10 5 10-5M2 12l10 5 10-5" />
+      </svg>
+    ),
+  },
+  {
     href: "/settings",
     label: "Keys & Settings",
     exact: true,

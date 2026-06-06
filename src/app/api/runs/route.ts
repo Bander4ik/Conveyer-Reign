@@ -46,6 +46,7 @@ export async function POST(req: Request) {
     title?: string;
     script?: string;
     characters?: CharacterInput[];
+    channelId?: string;
   };
   const script = (body.script ?? "").trim();
   if (!script) {
@@ -97,7 +98,10 @@ export async function POST(req: Request) {
     cast.push(entry);
   }
 
-  setConfig.run(JSON.stringify({ characters: cast }), id);
+  setConfig.run(
+    JSON.stringify({ characters: cast, channelId: (body.channelId ?? "").trim() || null }),
+    id
+  );
 
   // Run the pipeline in the background. Fine for local single-user use.
   runPipeline(id, script).catch((e) => {

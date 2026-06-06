@@ -12,6 +12,8 @@ export interface AssembleInput {
   imagePath: string;
   videoPath?: string | null;
   audio: TtsResult;
+  /** Intro stat card etc. — show the image full-frame, static (no Ken-Burns zoom/pan). */
+  staticCard?: boolean;
 }
 
 /**
@@ -65,7 +67,9 @@ export async function assembleVideo(
         // Total clip duration = audio + silence padding at the end so consecutive
         // scenes get a natural breath between them after concat.
         const clipDuration = audioDuration + tailSilence;
-        if (item.videoPath) {
+        if (item.staticCard) {
+          await renderStaticClip(item.imagePath, item.audio.filePath, clipPath, w, h, fps, clipDuration, tailSilence);
+        } else if (item.videoPath) {
           await renderAnimatedClip(item.videoPath, item.audio.filePath, clipPath, w, h, fps, clipDuration, tailSilence);
         } else {
           const zoomDirection: "in" | "out" = Math.random() < 0.5 ? "in" : "out";
@@ -190,6 +194,46 @@ function renderKenBurnsClip(
       .input(audioPath)
       .videoFilters(filter);
     // Pad audio with silence at the end so consecutive scenes get a breath.
+    if (tailSilenceSec > 0) {
+      cmd.audioFilters(`apad=pad_dur=${tailSilenceSec.toFixed(3)}`);
+    }
+    cmd
+      .outputOptions([
+        `-r ${fps}`,
+        `-t ${durationSec.toFixed(3)}`,
+        "-c:v libx264",
+        "-preset veryfast",
+        "-crf 23",
+        "-pix_fmt yuv420p",
+        "-c:a aac",
+        "-b:a 192k",
+        "-movflags +faststart",
+      ])
+      .on("error", reject)
+      .on("end", () => resolve())
+      .save(outPath);
+  });
+}
+
+/** Static full-frame clip (no zoom/pan) — used for the intro stat card so its
+ *  text never gets cropped by a Ken-Burns move. The image is already w×h. */
+function renderStaticClip(
+  imagePath: string,
+  audioPath: string,
+  outPath: string,
+  w: number,
+  h: number,
+  fps: number,
+  durationSec: number,
+  tailSilenceSec: number = 0
+): Promise<void> {
+  const filter = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=0x0e0f13,setsar=1,fps=${fps}`;
+  return new Promise((resolve, reject) => {
+    const cmd = ffmpeg()
+      .input(imagePath)
+      .inputOptions(["-loop 1"])
+      .input(audioPath)
+      .videoFilters(filter);
     if (tailSilenceSec > 0) {
       cmd.audioFilters(`apad=pad_dur=${tailSilenceSec.toFixed(3)}`);
     }

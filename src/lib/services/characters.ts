@@ -64,7 +64,8 @@ export function parseCast(configJson: string | null | undefined): CharacterSpec[
 export async function prepareCharacterReferences(
   runId: string,
   cast: CharacterSpec[],
-  charDir: string
+  charDir: string,
+  imageStyle?: string
 ): Promise<Record<string, string>> {
   if (cast.length === 0) return {};
   fs.mkdirSync(charDir, { recursive: true });
@@ -88,7 +89,7 @@ export async function prepareCharacterReferences(
         localPath = ch.inputImagePath;
       } else {
         const desc = ch.description?.trim() || ch.name;
-        localPath = await generatePortrait(runId, ch, desc, charDir);
+        localPath = await generatePortrait(runId, ch, desc, charDir, imageStyle);
       }
       if (!localPath) throw new Error("no reference image produced");
 
@@ -116,11 +117,12 @@ async function generatePortrait(
   runId: string,
   ch: CharacterSpec,
   desc: string,
-  charDir: string
+  charDir: string,
+  imageStyle?: string
 ): Promise<string> {
   const model = getSetting("IMAGE_MODEL") || undefined;
   const resolution = getSetting("IMAGE_RESOLUTION") || undefined;
-  const styleSuffix = getPrompt("image_prompt");
+  const styleSuffix = imageStyle ?? getPrompt("image_prompt");
   const prompt =
     `Character reference portrait of ${ch.name}: ${desc}. ` +
     `Single subject, centered, full figure and face clearly visible, neutral plain background, ` +

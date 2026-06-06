@@ -7,9 +7,11 @@ import { getRunDir } from "./run-paths";
 import { pLimit } from "./plimit";
 import { splitScript } from "./services/scene-split";
 import { parseCast, prepareCharacterReferences } from "./services/characters";
+import { resolveChannel } from "./channels";
 import { synthesizeScene } from "./services/tts";
 import { generateImage } from "./services/image-gen";
 import { animateScene, pickScenesToAnimate } from "./services/img2vid";
+import { extractMatchup, renderStatCard, makeSilentAudio, CARD_DURATION_SEC } from "./services/battle-stats";
 import { assembleVideo, type AssembleInput } from "./services/video-assemble";
 import { getKeyCount } from "./services/labs69";
 import { syncRunToDrive } from "./services/run-upload";
@@ -40,14 +42,26 @@ export async function runPipeline(runId: string, script: string) {
     //    stored in the run's config_json by the create-run API.
     const cfgRow = getConfigStmt.get(runId) as { config_json: string | null } | undefined;
     const cast = parseCast(cfgRow?.config_json);
+    let channelId: string | null = null;
+    try {
+      channelId = (JSON.parse(cfgRow?.config_json || "{}") as { channelId?: string }).channelId ?? null;
+    } catch {
+      // malformed config — fall back to global prompts
+    }
+    const channel = resolveChannel(channelId);
+    if (channel.channelName) {
+      log(runId, "info", `Channel: ${channel.channelName} · data mode: ${channel.dataMode}`, {
+        stage: "pipeline",
+      });
+    }
     if (cast.length > 0) {
       log(runId, "info", `Cast: ${cast.map((c) => c.name + (c.isHost ? " (host)" : "")).join(", ")}`, {
         stage: "character",
       });
     }
     const [scenes, characterRefs] = await Promise.all([
-      splitScript(runId, script, cast),
-      prepareCharacterReferences(runId, cast, charDir).catch((e) => {
+      splitScript(runId, script, cast, channel.sceneSplit, channel.dataMode === "science"),
+      prepareCharacterReferences(runId, cast, charDir, channel.imageStyle).catch((e) => {
         log(runId, "warn", `Character prep failed: ${(e as Error).message}`, { stage: "character" });
         return {} as Record<string, string>;
       }),
@@ -130,7 +144,9 @@ export async function runPipeline(runId: string, script: string) {
         checkCancelled(runId);
         const [audio, image] = await Promise.all([
           limitTts(() => synthesizeScene(runId, scene, audioDir)),
-          limitImg(() => generateImage(runId, scene, imgDir, characterRefs)),
+          limitImg(() =>
+            generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.dataMode === "science")
+          ),
         ]);
 
         // 2b. If this scene is in the animation target set, start the img2vid
@@ -151,12 +167,13 @@ export async function runPipeline(runId: string, script: string) {
             );
           }
         }
-        if (!videoPath && animTargets.has(scene.index)) {
+        if (!videoPath && animTargets.has(scene.index) && image.provider !== "wikimedia") {
           try {
             videoPath = await limitAnim(() =>
               animateScene(runId, scene, image.filePath, animDir, {
                 providerJobId: image.providerJobId,
                 imageProvider: image.provider,
+                motionStyle: channel.animationMotion,
               })
             );
           } catch (e) {
@@ -217,6 +234,37 @@ export async function runPipeline(runId: string, script: string) {
     if (sceneAssets.length === 0) throw new Error("No scenes succeeded");
 
     checkCancelled(runId);
+
+    // 2c. Battle data mode — prepend an intro "VS" stat card (exact figures via FFmpeg).
+    if (channel.dataMode === "battle") {
+      try {
+        const matchup = await extractMatchup(runId, script);
+        if (matchup) {
+          const [cw, cardH] = (getSetting("VIDEO_RESOLUTION") || "1920x1080").split("x").map(Number);
+          const cardPng = path.join(runDir, "stat-card.png");
+          const cardAudio = path.join(audioDir, "stat-card.mp3");
+          await renderStatCard(matchup, cardPng, cw, cardH);
+          await makeSilentAudio(cardAudio, CARD_DURATION_SEC);
+          sceneAssets.unshift({
+            scene: { index: -1, text: "", visual_prompt: "", duration_hint_sec: CARD_DURATION_SEC },
+            imagePath: cardPng,
+            videoPath: null,
+            audio: { filePath: cardAudio, durationSec: CARD_DURATION_SEC },
+            staticCard: true,
+          });
+          log(
+            runId,
+            "success",
+            `Battle: added VS stat card — ${matchup.left.name} vs ${matchup.right.name}`,
+            { stage: "battle" }
+          );
+        }
+      } catch (e) {
+        log(runId, "warn", `Battle card skipped: ${(e as Error).message.slice(0, 160)}`, {
+          stage: "battle",
+        });
+      }
+    }
 
     // 3. Assemble final video
     const finalPath = await assembleVideo(runId, sceneAssets, runDir);

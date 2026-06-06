@@ -19,7 +19,7 @@ export async function animateScene(
   scene: Scene,
   imagePath: string,
   outDir: string,
-  options: { providerJobId?: string; imageProvider?: string } = {}
+  options: { providerJobId?: string; imageProvider?: string; motionStyle?: string } = {}
 ): Promise<string | null> {
   const provider = (getSetting("ANIMATION_PROVIDER") || "off").toLowerCase();
   if (provider === "off") return null;
@@ -33,7 +33,7 @@ export async function animateScene(
   });
 
   if (provider === "69labs") {
-    await labs69Img2Vid(runId, scene, options.providerJobId, options.imageProvider, filePath);
+    await labs69Img2Vid(runId, scene, options.providerJobId, options.imageProvider, filePath, options.motionStyle);
   } else if (provider === "replicate") {
     await replicateImg2Vid(scene, imagePath, filePath);
   } else if (provider === "fal") {
@@ -51,7 +51,8 @@ async function labs69Img2Vid(
   scene: Scene,
   providerJobId: string | undefined,
   imageProvider: string | undefined,
-  outPath: string
+  outPath: string,
+  motionStyle?: string
 ) {
   const model = getSetting("ANIMATION_MODEL") || undefined;
   const aspectRatio = getSetting("IMAGE_RATIO") || undefined;
@@ -59,9 +60,10 @@ async function labs69Img2Vid(
   // ANIMATION_KEEP_VEO_AUDIO=1 — keep Veo's generated audio (default: off, mute it).
   const keepAudio = getSetting("ANIMATION_KEEP_VEO_AUDIO") === "1";
 
-  // Live-photo style: per-scene visual prompt + global motion-style suffix.
-  const motionStyle = getPrompt("animation_motion");
-  const prompt = `${scene.visual_prompt}. ${motionStyle}`;
+  // Live-photo style: per-scene visual prompt + motion-style suffix
+  // (channel override when set, otherwise the global /prompts value).
+  const motion = motionStyle ?? getPrompt("animation_motion");
+  const prompt = `${scene.visual_prompt}. ${motion}`;
 
   // If the image was generated through 69labs, pass its jobId so the API
   // reuses the cached image instead of making us re-upload bytes.

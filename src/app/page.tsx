@@ -39,6 +39,8 @@ export default function NewRunPage() {
   const [characters, setCharacters] = useState<CharacterDraft[]>([]);
   const [busy, setBusy] = useState(false);
   const [stats, setStats] = useState<StatsResp | null>(null);
+  const [channels, setChannels] = useState<{ id: string; name: string; data_mode: string }[]>([]);
+  const [channelId, setChannelId] = useState("");
   const router = useRouter();
 
   useEffect(() => {
@@ -46,6 +48,10 @@ export default function NewRunPage() {
       .then((r) => r.json())
       .then(setStats)
       .catch(() => setStats(null));
+    fetch("/api/channels")
+      .then((r) => r.json())
+      .then(setChannels)
+      .catch(() => setChannels([]));
   }, []);
 
   const scriptStats = useMemo(() => {
@@ -154,7 +160,7 @@ export default function NewRunPage() {
       const r = await fetch("/api/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, script, characters: cast }),
+        body: JSON.stringify({ title, script, characters: cast, channelId }),
       });
       if (!r.ok) {
         alert(`Error: ${await r.text()}`);
@@ -176,6 +182,21 @@ export default function NewRunPage() {
       </p>
 
       <div className="card" style={{ display: "grid", gap: 12 }}>
+        <div>
+          <label className="label">Channel</label>
+          <select className="input" value={channelId} onChange={(e) => setChannelId(e.target.value)}>
+            <option value="">None — use global prompts</option>
+            {channels.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+                {c.data_mode !== "none" ? ` (${c.data_mode})` : ""}
+              </option>
+            ))}
+          </select>
+          <p style={{ color: "var(--fg-faint)", fontSize: 12.5, marginTop: 6 }}>
+            Use a saved channel&apos;s prompts &amp; data mode. <a href="/channels">Manage channels</a>
+          </p>
+        </div>
         <div>
           <label className="label">Title (optional)</label>
           <input

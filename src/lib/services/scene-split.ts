@@ -14,6 +14,9 @@ export interface Scene {
   /** Names of the cast members visually present in this scene (for character
    *  consistency). Empty/absent when the scene has no defined characters. */
   characters?: string[];
+  /** Science data mode: a real, photographable subject (Wikipedia lookup name)
+   *  to fetch a real image for instead of generating one. */
+  real_subject?: string;
 }
 
 /** A character the script splitter should tag scenes with. */
@@ -48,6 +51,19 @@ For EVERY scene object you output, ALSO include a "characters" field: a JSON arr
 }
 
 /**
+ * Appended when the run's channel is in "science" data mode. Asks the model to
+ * tag scenes that depict a real, photographable subject so the image stage can
+ * pull a real photo from Wikipedia instead of generating one.
+ */
+function buildScienceSuffix(enabled: boolean): string {
+  if (!enabled) return "";
+  return `
+
+── REAL SUBJECTS (science mode) ──
+When a scene's visual is a REAL, photographable subject a viewer would expect an ACTUAL photo of — a specific planet or moon, a named telescope / spacecraft / mission, a named real person (e.g. a scientist), or a famous real place — ALSO add a "real_subject" field on that scene: the exact Wikipedia-style lookup name (e.g. "Saturn", "James Webb Space Telescope", "Carl Sagan"). For generic, abstract or dramatized visuals, omit "real_subject" or set it to "".`;
+}
+
+/**
  * Chunk threshold for scene-split.
  *
  * Gemini 2.5 Flash/Pro caps output at 65 535 tokens. A scene-split JSON
@@ -71,10 +87,15 @@ const WORDS_PER_CHUNK = 3000;
 export async function splitScript(
   runId: string,
   script: string,
-  cast: CastMember[] = []
+  cast: CastMember[] = [],
+  sceneSplitPrompt?: string,
+  tagRealSubjects: boolean = false
 ): Promise<Scene[]> {
   const provider = (getSetting("SCENE_SPLIT_PROVIDER") || "google").toLowerCase();
-  const systemPrompt = getPrompt("scene_split") + buildCastSuffix(cast);
+  const systemPrompt =
+    (sceneSplitPrompt ?? getPrompt("scene_split")) +
+    buildCastSuffix(cast) +
+    buildScienceSuffix(tagRealSubjects);
 
   const totalWords = script.trim().split(/\s+/).filter(Boolean).length;
   log(runId, "info", `Splitting script (${provider}) — ${totalWords} words`, {
@@ -202,6 +223,7 @@ async function splitOneChunk(
     characters: Array.isArray(s.characters)
       ? s.characters.map((x: unknown) => String(x)).filter(Boolean)
       : [],
+    real_subject: typeof s.real_subject === "string" ? s.real_subject.trim() : "",
   }));
 }
 

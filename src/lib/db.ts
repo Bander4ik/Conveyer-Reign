@@ -58,6 +58,21 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_run_logs_run ON run_logs(run_id, id);
 `);
 
+// Channels — per-channel prompt profiles + data mode (none / science / battle).
+// Empty prompt fields fall back to the global /prompts defaults at resolve time.
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS channels (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    scene_split TEXT NOT NULL DEFAULT '',
+    image_prompt TEXT NOT NULL DEFAULT '',
+    animation_motion TEXT NOT NULL DEFAULT '',
+    data_mode TEXT NOT NULL DEFAULT 'none',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`).run();
+
 // Migrations for older DBs. SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT
 // EXISTS`, so we attempt and ignore failure when the column already exists.
 function tryAddColumn(table: string, columnDecl: string): void {

@@ -6,6 +6,7 @@ import { log } from "../logger";
 import type { Scene } from "./scene-split";
 import { createImageJob, pollJob, downloadJob, cancelJob, releaseJob } from "./labs69";
 import { MAX_CHARACTER_REFS } from "./characters";
+import { tryRealImage } from "./wiki-image";
 
 export interface ImageResult {
   /** Path to the png file. */
@@ -24,10 +25,12 @@ export async function generateImage(
   runId: string,
   scene: Scene,
   outDir: string,
-  characterRefs?: Record<string, string>
+  characterRefs?: Record<string, string>,
+  imageStyle?: string,
+  realImageMode?: boolean
 ): Promise<ImageResult> {
   const provider = (getSetting("IMAGE_PROVIDER") || "69labs").toLowerCase();
-  const styleSuffix = getPrompt("image_prompt");
+  const styleSuffix = imageStyle ?? getPrompt("image_prompt");
 
   // Character consistency: if this scene features cast members whose reference
   // image was prepared, collect those reference URLs (capped) and instruct the
@@ -54,6 +57,15 @@ export async function generateImage(
       : `${scene.visual_prompt}, ${styleSuffix}`;
   const fileName = `scene_${String(scene.index).padStart(3, "0")}.png`;
   const filePath = path.join(outDir, fileName);
+
+  // Science data mode: use a real Wikipedia image for tagged real subjects.
+  if (realImageMode && scene.real_subject) {
+    const ok = await tryRealImage(runId, scene.real_subject, filePath, scene.real_subject);
+    if (ok) {
+      log(runId, "success", `Image saved (real photo): ${fileName}`, { stage: "image" });
+      return { filePath, provider: "wikimedia" };
+    }
+  }
 
   log(
     runId,
