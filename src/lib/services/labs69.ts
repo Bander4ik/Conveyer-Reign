@@ -122,6 +122,16 @@ async function fetchWithTimeout(
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     return await fetch(input, { ...(init ?? {}), signal: ctrl.signal });
+  } catch (e) {
+    // Node/undici hides the real reason behind a generic "fetch failed" — surface
+    // the underlying cause (ECONNRESET / ETIMEDOUT / ENOTFOUND / TLS) so the run
+    // log shows WHY a 69labs call failed instead of a useless "fetch failed".
+    if ((e as Error).name === "AbortError") {
+      throw new Error(`request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    const cause = (e as { cause?: { code?: string; message?: string } }).cause;
+    const detail = cause?.code || cause?.message || (e as Error).message;
+    throw new Error(`network error contacting 69labs: ${detail}`);
   } finally {
     clearTimeout(t);
   }
