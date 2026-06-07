@@ -11,8 +11,9 @@ import { splitScript, type Scene } from "@/lib/services/scene-split";
 import { getRunDir } from "@/lib/run-paths";
 import { pLimit } from "@/lib/plimit";
 import { getSetting } from "@/lib/settings";
+import { resolveChannel } from "@/lib/channels";
 
-const getRun = db.prepare("SELECT id, script FROM runs WHERE id = ?");
+const getRun = db.prepare("SELECT id, script, config_json FROM runs WHERE id = ?");
 const updateRun = db.prepare(
   "UPDATE runs SET status = ?, output_path = ?, updated_at = datetime('now') WHERE id = ?"
 );
@@ -26,7 +27,7 @@ const updateRun = db.prepare(
 export async function POST(_: Request, ctx: { params: Promise<{ id: string }> }) {
   ensureInit();
   const { id } = await ctx.params;
-  const row = getRun.get(id) as { id: string; script: string } | undefined;
+  const row = getRun.get(id) as { id: string; script: string; config_json: string | null } | undefined;
   if (!row) return NextResponse.json({ error: "run not found" }, { status: 404 });
 
   const runDir = getRunDir(id);
@@ -40,7 +41,21 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
   (async () => {
     try {
       updateRun.run("running", null, id);
-      log(id, "info", "Smart reassemble: checking assets", { stage: "pipeline" });
+      // Use the run's channel prompts when regenerating, so reassemble stays
+      // consistent with how the run was made (not the global default prompt).
+      let channelId: string | null = null;
+      try {
+        channelId = (JSON.parse(row.config_json || "{}") as { channelId?: string }).channelId ?? null;
+      } catch {
+        // malformed config — fall back to global prompts
+      }
+      const channel = resolveChannel(channelId);
+      log(
+        id,
+        "info",
+        `Smart reassemble: checking assets${channel.channelName ? ` · channel: ${channel.channelName}` : ""}`,
+        { stage: "pipeline" }
+      );
 
       // 1. Get scenes
       let scenes: Scene[];
@@ -50,7 +65,7 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
         log(id, "info", `Loaded ${scenes.length} scenes from scenes.json`, { stage: "pipeline" });
       } else {
         log(id, "info", "scenes.json missing — re-splitting script via Gemini", { stage: "pipeline" });
-        scenes = await splitScript(id, row.script);
+        scenes = await splitScript(id, row.script, [], channel.sceneSplit);
         fs.writeFileSync(scenesFile, JSON.stringify(scenes, null, 2), "utf-8");
       }
 
@@ -58,11 +73,21 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
       function audioPath(idx: number) {
         return path.join(audioDir, `scene_${String(idx).padStart(3, "0")}.mp3`);
       }
-      function imagePath(idx: number) {
+      function imageWritePath(idx: number) {
         return path.join(imgDir, `scene_${String(idx).padStart(3, "0")}.png`);
       }
+      // A scene's still can be an AI .png OR a Pexels stock .jpg — accept either,
+      // otherwise reassemble treats every stock photo as "missing" and overwrites
+      // it with a fresh AI image.
+      function existingImage(idx: number): string | null {
+        const png = imageWritePath(idx);
+        if (fs.existsSync(png)) return png;
+        const jpg = path.join(imgDir, `scene_${String(idx).padStart(3, "0")}.jpg`);
+        if (fs.existsSync(jpg)) return jpg;
+        return null;
+      }
       const missingAudio = scenes.filter((s) => !fs.existsSync(audioPath(s.index)));
-      const missingImage = scenes.filter((s) => !fs.existsSync(imagePath(s.index)));
+      const missingImage = scenes.filter((s) => !existingImage(s.index));
 
       if (missingAudio.length || missingImage.length) {
         log(
@@ -86,7 +111,7 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
           ),
           ...missingImage.map((s) =>
             limitImg(() =>
-              generateImage(id, s, imgDir).catch((e) => {
+              generateImage(id, s, imgDir, undefined, channel.imageStyle, channel.realSubjects).catch((e) => {
                 log(id, "warn", `Failed to regenerate image #${s.index}: ${(e as Error).message}`, {
                   stage: "image",
                 });
@@ -102,8 +127,8 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
       const inputs: AssembleInput[] = [];
       for (const s of scenes) {
         const ap = audioPath(s.index);
-        const ip = imagePath(s.index);
-        if (!fs.existsSync(ap) || !fs.existsSync(ip)) {
+        const ip = existingImage(s.index);
+        if (!fs.existsSync(ap) || !ip) {
           log(id, "warn", `Scene #${s.index} still incomplete — skipping`, { stage: "assemble" });
           continue;
         }

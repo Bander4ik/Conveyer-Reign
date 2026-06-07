@@ -149,6 +149,11 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
           <p style={{ color: "var(--fg-muted)", fontSize: 13, marginBottom: 10 }}>
             {assets.scenes.length} scenes already have audio + images on disk. You can fill any gaps and reassemble the final video without re-running the whole pipeline.
           </p>
+          <p style={{ color: "var(--fg-muted)", fontSize: 12, marginBottom: 10, lineHeight: 1.5 }}>
+            <strong>Note:</strong> reassemble reuses this run&apos;s scenes exactly as they were first
+            split — it keeps the <em>original</em> prompt and will <em>not</em> apply a prompt you changed
+            afterwards. To generate with a new or edited prompt, start a <strong>New run</strong> instead.
+          </p>
           <button className="btn" onClick={reassemble} disabled={reassembling}>
             {reassembling ? "Reassembling..." : "🔁 Reassemble from existing assets"}
           </button>
