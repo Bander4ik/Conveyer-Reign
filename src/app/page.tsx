@@ -39,7 +39,9 @@ export default function NewRunPage() {
   const [characters, setCharacters] = useState<CharacterDraft[]>([]);
   const [busy, setBusy] = useState(false);
   const [stats, setStats] = useState<StatsResp | null>(null);
-  const [channels, setChannels] = useState<{ id: string; name: string; data_mode: string }[]>([]);
+  const [channels, setChannels] = useState<
+    { id: string; name: string; visual_source: string; battle_card: boolean }[]
+  >([]);
   const [channelId, setChannelId] = useState("");
   const router = useRouter();
 
@@ -189,7 +191,7 @@ export default function NewRunPage() {
             {channels.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
-                {c.data_mode !== "none" ? ` (${c.data_mode})` : ""}
+                {` — ${c.visual_source === "science" ? "real images" : "AI"}${c.battle_card ? " + stat card" : ""}`}
               </option>
             ))}
           </select>

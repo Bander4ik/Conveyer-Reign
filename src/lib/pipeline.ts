@@ -50,9 +50,12 @@ export async function runPipeline(runId: string, script: string) {
     }
     const channel = resolveChannel(channelId);
     if (channel.channelName) {
-      log(runId, "info", `Channel: ${channel.channelName} · data mode: ${channel.dataMode}`, {
-        stage: "pipeline",
-      });
+      log(
+        runId,
+        "info",
+        `Channel: ${channel.channelName} · source: ${channel.visualSource}${channel.battleCard ? " + stat card" : ""}`,
+        { stage: "pipeline" }
+      );
     }
     if (cast.length > 0) {
       log(runId, "info", `Cast: ${cast.map((c) => c.name + (c.isHost ? " (host)" : "")).join(", ")}`, {
@@ -60,7 +63,7 @@ export async function runPipeline(runId: string, script: string) {
       });
     }
     const [scenes, characterRefs] = await Promise.all([
-      splitScript(runId, script, cast, channel.sceneSplit, channel.dataMode === "science"),
+      splitScript(runId, script, cast, channel.sceneSplit, channel.visualSource === "science"),
       prepareCharacterReferences(runId, cast, charDir, channel.imageStyle).catch((e) => {
         log(runId, "warn", `Character prep failed: ${(e as Error).message}`, { stage: "character" });
         return {} as Record<string, string>;
@@ -145,7 +148,7 @@ export async function runPipeline(runId: string, script: string) {
         const [audio, image] = await Promise.all([
           limitTts(() => synthesizeScene(runId, scene, audioDir)),
           limitImg(() =>
-            generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.dataMode === "science")
+            generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.visualSource === "science")
           ),
         ]);
 
@@ -236,7 +239,7 @@ export async function runPipeline(runId: string, script: string) {
     checkCancelled(runId);
 
     // 2c. Battle data mode — prepend an intro "VS" stat card (exact figures via FFmpeg).
-    if (channel.dataMode === "battle") {
+    if (channel.battleCard) {
       try {
         const matchup = await extractMatchup(runId, script);
         if (matchup) {

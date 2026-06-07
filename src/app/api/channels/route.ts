@@ -16,7 +16,8 @@ export async function POST(req: Request) {
     scene_split?: string;
     image_prompt?: string;
     animation_motion?: string;
-    data_mode?: string;
+    visual_source?: string;
+    battle_card?: boolean | string;
   };
   const id = body.id?.trim() || randomUUID();
   upsertChannel({
@@ -25,7 +26,8 @@ export async function POST(req: Request) {
     scene_split: body.scene_split ?? "",
     image_prompt: body.image_prompt ?? "",
     animation_motion: body.animation_motion ?? "",
-    data_mode: body.data_mode,
+    visual_source: body.visual_source,
+    battle_card: body.battle_card,
   });
   return NextResponse.json({ id });
 }

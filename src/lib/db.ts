@@ -73,6 +73,18 @@ db.prepare(`
   );
 `).run();
 
+// Channels v2 — split the legacy single `data_mode` into independent
+// `visual_source` (ai | science) + `battle_card` (stat-card overlay on/off).
+// Migrate once: only rows that predate the columns (visual_source IS NULL).
+tryAddColumn("channels", "visual_source TEXT");
+tryAddColumn("channels", "battle_card TEXT");
+db.prepare(
+  `UPDATE channels SET
+     visual_source = CASE WHEN data_mode = 'science' THEN 'science' ELSE 'ai' END,
+     battle_card   = CASE WHEN data_mode = 'battle'  THEN '1' ELSE '0' END
+   WHERE visual_source IS NULL`
+).run();
+
 // Migrations for older DBs. SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT
 // EXISTS`, so we attempt and ignore failure when the column already exists.
 function tryAddColumn(table: string, columnDecl: string): void {
