@@ -40,9 +40,13 @@ export function drawtextFont(): string {
     if (!src) return "";
     const dir = ".cache-fonts";
     const dest = path.join(dir, "label.ttf");
-    if (!fs.existsSync(dest)) {
+    // Copy via a temp name + atomic rename so a crash mid-copy never leaves a
+    // truncated label.ttf that would silently break every drawtext afterwards.
+    if (!fs.existsSync(dest) || fs.statSync(dest).size === 0) {
       fs.mkdirSync(dir, { recursive: true });
-      fs.copyFileSync(src, dest);
+      const tmp = `${dest}.tmp`;
+      fs.copyFileSync(src, tmp);
+      fs.renameSync(tmp, dest);
     }
     cachedRef = dest.split(path.sep).join("/");
     return cachedRef;

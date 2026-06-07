@@ -53,7 +53,7 @@ export async function runPipeline(runId: string, script: string) {
       log(
         runId,
         "info",
-        `Channel: ${channel.channelName} · source: ${channel.visualSource}${channel.battleCard ? " + stat card" : ""}`,
+        `Channel: ${channel.channelName}${channel.battleCard ? " · stat card on" : ""}`,
         { stage: "pipeline" }
       );
     }
@@ -63,7 +63,7 @@ export async function runPipeline(runId: string, script: string) {
       });
     }
     const [scenes, characterRefs] = await Promise.all([
-      splitScript(runId, script, cast, channel.sceneSplit, channel.visualSource === "science"),
+      splitScript(runId, script, cast, channel.sceneSplit),
       prepareCharacterReferences(runId, cast, charDir, channel.imageStyle).catch((e) => {
         log(runId, "warn", `Character prep failed: ${(e as Error).message}`, { stage: "character" });
         return {} as Record<string, string>;
@@ -148,7 +148,7 @@ export async function runPipeline(runId: string, script: string) {
         const [audio, image] = await Promise.all([
           limitTts(() => synthesizeScene(runId, scene, audioDir)),
           limitImg(() =>
-            generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.visualSource === "science")
+            generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle)
           ),
         ]);
 

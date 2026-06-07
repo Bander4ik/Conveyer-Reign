@@ -58,8 +58,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_run_logs_run ON run_logs(run_id, id);
 `);
 
-// Channels — per-channel prompt profiles + data mode (none / science / battle).
-// Empty prompt fields fall back to the global /prompts defaults at resolve time.
+// Channels — per-channel prompt profiles + a `battle_card` flag. Empty prompt
+// fields fall back to the global /prompts defaults at resolve time. (Each
+// scene's visual type — AI / real photo / real person — is decided per scene by
+// the scene-split prompt, not by a channel-wide switch.)
 db.prepare(`
   CREATE TABLE IF NOT EXISTS channels (
     id TEXT PRIMARY KEY,
@@ -73,16 +75,16 @@ db.prepare(`
   );
 `).run();
 
-// Channels v2 — split the legacy single `data_mode` into independent
-// `visual_source` (ai | science) + `battle_card` (stat-card overlay on/off).
-// Migrate once: only rows that predate the columns (visual_source IS NULL).
-tryAddColumn("channels", "visual_source TEXT");
+// Channels v2 — `battle_card` is the live stat-card flag (owned by channels.ts).
+// Back-fill it ONCE for legacy rows that predate the column (battle_card IS
+// NULL); rows the app has written always have a non-null battle_card, so this
+// never re-runs on them and a user's toggle is never clobbered on restart.
+// (The legacy `data_mode` / `visual_source` columns are deprecated and unread —
+// kept only so older DBs don't error.)
 tryAddColumn("channels", "battle_card TEXT");
 db.prepare(
-  `UPDATE channels SET
-     visual_source = CASE WHEN data_mode = 'science' THEN 'science' ELSE 'ai' END,
-     battle_card   = CASE WHEN data_mode = 'battle'  THEN '1' ELSE '0' END
-   WHERE visual_source IS NULL`
+  `UPDATE channels SET battle_card = CASE WHEN data_mode = 'battle' THEN '1' ELSE '0' END
+   WHERE battle_card IS NULL`
 ).run();
 
 // Migrations for older DBs. SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT

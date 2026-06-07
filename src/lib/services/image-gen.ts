@@ -26,8 +26,7 @@ export async function generateImage(
   scene: Scene,
   outDir: string,
   characterRefs?: Record<string, string>,
-  imageStyle?: string,
-  realImageMode?: boolean
+  imageStyle?: string
 ): Promise<ImageResult> {
   const provider = (getSetting("IMAGE_PROVIDER") || "69labs").toLowerCase();
   const styleSuffix = imageStyle ?? getPrompt("image_prompt");
@@ -58,13 +57,25 @@ export async function generateImage(
   const fileName = `scene_${String(scene.index).padStart(3, "0")}.png`;
   const filePath = path.join(outDir, fileName);
 
-  // Science data mode: use a real Wikipedia image for tagged real subjects.
-  if (realImageMode && scene.real_subject) {
-    const ok = await tryRealImage(runId, scene.real_subject, filePath, scene.real_subject);
+  // Per-scene visual routing (set by the scene-split prompt): pull a real photo
+  // instead of generating it, for real subjects / real people.
+  const vtype = scene.visual_type ?? "generated";
+  if (vtype === "real_image" && scene.real_image_query) {
+    const ok = await tryRealImage(runId, scene.real_image_query, filePath, "");
     if (ok) {
       log(runId, "success", `Image saved (real photo): ${fileName}`, { stage: "image" });
       return { filePath, provider: "wikimedia" };
     }
+  } else if (vtype === "person_overlay" && scene.wikipedia_lookup) {
+    const ok = await tryRealImage(runId, scene.wikipedia_lookup, filePath, scene.person_name || "");
+    if (ok) {
+      log(runId, "success", `Image saved (real person): ${fileName}`, { stage: "image" });
+      return { filePath, provider: "wikimedia" };
+    }
+  } else if (vtype !== "generated") {
+    log(runId, "warn", `Scene #${scene.index} tagged "${vtype}" but its lookup query is empty — generating with AI instead`, {
+      stage: "image",
+    });
   }
 
   log(

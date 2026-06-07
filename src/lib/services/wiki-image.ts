@@ -5,10 +5,10 @@ import { log } from "../logger";
 import { drawtextFont, escDrawtext } from "./fonts";
 
 /**
- * Science data mode — fetches a REAL image from Wikipedia for a named subject
- * (a planet, a spacecraft, a scientist…), normalizes it to the video size and
- * burns the subject's name as a lower-third label. Used instead of the AI image
- * for scenes the splitter tagged with a `real_subject`.
+ * Per-scene real images — fetches a REAL photo from Wikipedia for a scene the
+ * scene-split prompt tagged "real_image" (via real_image_query) or
+ * "person_overlay" (via wikipedia_lookup), normalizes it to the video size and
+ * burns an optional name label. Used instead of the AI image for that scene.
  *
  * Images come from Wikipedia's lead-image (PageImages) — mostly Wikimedia
  * Commons. Best-effort: any failure returns false and the caller falls back to
@@ -66,8 +66,8 @@ export async function tryRealImage(
 ): Promise<boolean> {
   const hit = await searchWikiImage(query);
   if (!hit) {
-    log(runId, "info", `Science: no Wikipedia image for "${query}" — falling back to AI`, {
-      stage: "science",
+    log(runId, "info", `Real image: no Wikipedia image for "${query}" — falling back to AI`, {
+      stage: "image",
     });
     return false;
   }
@@ -88,14 +88,14 @@ export async function tryRealImage(
   const [w, h] = (getSetting("VIDEO_RESOLUTION") || "1920x1080").split("x").map(Number);
   try {
     await normalizeAndLabel(tmp, outPath, w, h, label);
-    log(runId, "success", `Science: real image for "${query}" → ${hit.title}`, {
-      stage: "science",
+    log(runId, "success", `Real image: "${query}" → ${hit.title}`, {
+      stage: "image",
       data: { url: hit.url },
     });
     return true;
   } catch (e) {
-    log(runId, "warn", `Science: image processing failed for "${query}": ${(e as Error).message.slice(0, 140)}`, {
-      stage: "science",
+    log(runId, "warn", `Real image: processing failed for "${query}": ${(e as Error).message.slice(0, 140)}`, {
+      stage: "image",
     });
     return false;
   } finally {

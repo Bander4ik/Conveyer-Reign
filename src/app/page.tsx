@@ -39,9 +39,7 @@ export default function NewRunPage() {
   const [characters, setCharacters] = useState<CharacterDraft[]>([]);
   const [busy, setBusy] = useState(false);
   const [stats, setStats] = useState<StatsResp | null>(null);
-  const [channels, setChannels] = useState<
-    { id: string; name: string; visual_source: string; battle_card: boolean }[]
-  >([]);
+  const [channels, setChannels] = useState<{ id: string; name: string; battle_card: boolean }[]>([]);
   const [channelId, setChannelId] = useState("");
   const router = useRouter();
 
@@ -191,12 +189,12 @@ export default function NewRunPage() {
             {channels.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
-                {` — ${c.visual_source === "science" ? "real images" : "AI"}${c.battle_card ? " + stat card" : ""}`}
+                {c.battle_card ? " — with stat card" : ""}
               </option>
             ))}
           </select>
           <p style={{ color: "var(--fg-faint)", fontSize: 12.5, marginTop: 6 }}>
-            Use a saved channel&apos;s prompts &amp; data mode. <a href="/channels">Manage channels</a>
+            Use a saved channel&apos;s prompts &amp; stat-card setting. <a href="/channels">Manage channels</a>
           </p>
         </div>
         <div>

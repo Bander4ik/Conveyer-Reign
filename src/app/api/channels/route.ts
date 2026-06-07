@@ -16,7 +16,6 @@ export async function POST(req: Request) {
     scene_split?: string;
     image_prompt?: string;
     animation_motion?: string;
-    visual_source?: string;
     battle_card?: boolean | string;
   };
   const id = body.id?.trim() || randomUUID();
@@ -26,7 +25,6 @@ export async function POST(req: Request) {
     scene_split: body.scene_split ?? "",
     image_prompt: body.image_prompt ?? "",
     animation_motion: body.animation_motion ?? "",
-    visual_source: body.visual_source,
     battle_card: body.battle_card,
   });
   return NextResponse.json({ id });

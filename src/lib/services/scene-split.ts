@@ -14,9 +14,14 @@ export interface Scene {
   /** Names of the cast members visually present in this scene (for character
    *  consistency). Empty/absent when the scene has no defined characters. */
   characters?: string[];
-  /** Science data mode: a real, photographable subject (Wikipedia lookup name)
-   *  to fetch a real image for instead of generating one. */
-  real_subject?: string;
+  /** Per-scene visual routing (set by the scene-split prompt):
+   *   - "generated" (default): AI image / Veo clip from visual_prompt
+   *   - "real_image": fetch a real photo via real_image_query (Ken Burns, AI fallback)
+   *   - "person_overlay": fetch a real person's photo via wikipedia_lookup, labelled person_name */
+  visual_type?: "generated" | "real_image" | "person_overlay";
+  person_name?: string;
+  wikipedia_lookup?: string;
+  real_image_query?: string;
 }
 
 /** A character the script splitter should tag scenes with. */
@@ -51,16 +56,19 @@ For EVERY scene object you output, ALSO include a "characters" field: a JSON arr
 }
 
 /**
- * Appended when the run's channel is in "science" data mode. Asks the model to
- * tag scenes that depict a real, photographable subject so the image stage can
- * pull a real photo from Wikipedia instead of generating one.
+ * Always appended. Lets the scene-split model route EACH scene's visual per
+ * scene, so one video can freely mix AI footage, real photos and real people.
+ * Works with any theme/prompt; scenes default to "generated" if not tagged.
  */
-function buildScienceSuffix(enabled: boolean): string {
-  if (!enabled) return "";
+function buildRoutingSuffix(): string {
   return `
 
-── REAL SUBJECTS (science mode) ──
-When a scene's visual is a REAL, photographable subject a viewer would expect an ACTUAL photo of — a specific planet or moon, a named telescope / spacecraft / mission, a named real person (e.g. a scientist), or a famous real place — ALSO add a "real_subject" field on that scene: the exact Wikipedia-style lookup name (e.g. "Saturn", "James Webb Space Telescope", "Carl Sagan"). For generic, abstract or dramatized visuals, omit "real_subject" or set it to "".`;
+── PER-SCENE VISUAL TYPE (optional, per scene) ──
+For EACH scene you MAY add a "visual_type" field choosing how its visual is sourced:
+- "generated" (DEFAULT): AI-generated from "visual_prompt". Use for fictional, dramatized or generic scenes.
+- "real_image": the scene shows a REAL thing best seen as an actual photograph (a specific planet, telescope, place, named animal/object). ALSO set "real_image_query": a precise web/Wikipedia search string (e.g. "NASA Cassini Saturn rings", "Hubble Pillars of Creation"). Keep "visual_prompt" as the AI fallback.
+- "person_overlay": the scene features a REAL named person (scientist, historical figure). ALSO set "wikipedia_lookup": the exact Wikipedia article title (e.g. "Carl Sagan"), and "person_name": the on-screen display name. Keep "visual_prompt" as the AI fallback.
+Only use "real_image"/"person_overlay" when a real photo genuinely exists and fits; otherwise omit "visual_type" (or use "generated"). When you set "real_image" or "person_overlay", you MUST also set its query field.`;
 }
 
 /**
@@ -88,14 +96,11 @@ export async function splitScript(
   runId: string,
   script: string,
   cast: CastMember[] = [],
-  sceneSplitPrompt?: string,
-  tagRealSubjects: boolean = false
+  sceneSplitPrompt?: string
 ): Promise<Scene[]> {
   const provider = (getSetting("SCENE_SPLIT_PROVIDER") || "google").toLowerCase();
   const systemPrompt =
-    (sceneSplitPrompt ?? getPrompt("scene_split")) +
-    buildCastSuffix(cast) +
-    buildScienceSuffix(tagRealSubjects);
+    (sceneSplitPrompt ?? getPrompt("scene_split")) + buildCastSuffix(cast) + buildRoutingSuffix();
 
   const totalWords = script.trim().split(/\s+/).filter(Boolean).length;
   log(runId, "info", `Splitting script (${provider}) — ${totalWords} words`, {
@@ -223,7 +228,13 @@ async function splitOneChunk(
     characters: Array.isArray(s.characters)
       ? s.characters.map((x: unknown) => String(x)).filter(Boolean)
       : [],
-    real_subject: typeof s.real_subject === "string" ? s.real_subject.trim() : "",
+    visual_type:
+      s.visual_type === "real_image" || s.visual_type === "person_overlay"
+        ? s.visual_type
+        : "generated",
+    person_name: typeof s.person_name === "string" ? s.person_name.trim() : "",
+    wikipedia_lookup: typeof s.wikipedia_lookup === "string" ? s.wikipedia_lookup.trim() : "",
+    real_image_query: typeof s.real_image_query === "string" ? s.real_image_query.trim() : "",
   }));
 }
 

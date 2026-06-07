@@ -1,18 +1,13 @@
 import db from "./db";
 import { getPrompt } from "./prompts";
 
-/** How a channel's scenes are produced. */
-export type VisualSource = "ai" | "science";
-
 export interface Channel {
   id: string;
   name: string;
   scene_split: string;
   image_prompt: string;
   animation_motion: string;
-  /** "ai" = generate every scene; "science" = real Wikipedia photos for real subjects, AI otherwise. */
-  visual_source: VisualSource;
-  /** Add an intro "VS" stat card. Independent of visual_source (works with AI visuals too). */
+  /** Add an intro "VS" stat card at the start of the video. */
   battle_card: boolean;
   created_at?: string;
   updated_at?: string;
@@ -25,33 +20,28 @@ export interface ResolvedChannel {
   sceneSplit: string;
   imageStyle: string;
   animationMotion: string;
-  visualSource: VisualSource;
   battleCard: boolean;
 }
 
 const listStmt = db.prepare(
-  "SELECT id, name, scene_split, image_prompt, animation_motion, visual_source, battle_card, created_at, updated_at FROM channels ORDER BY name COLLATE NOCASE"
+  "SELECT id, name, scene_split, image_prompt, animation_motion, battle_card, created_at, updated_at FROM channels ORDER BY name COLLATE NOCASE"
 );
 const getStmt = db.prepare(
-  "SELECT id, name, scene_split, image_prompt, animation_motion, visual_source, battle_card FROM channels WHERE id = ?"
+  "SELECT id, name, scene_split, image_prompt, animation_motion, battle_card FROM channels WHERE id = ?"
 );
 const upsertStmt = db.prepare(
-  `INSERT INTO channels (id, name, scene_split, image_prompt, animation_motion, visual_source, battle_card, updated_at)
-   VALUES (@id, @name, @scene_split, @image_prompt, @animation_motion, @visual_source, @battle_card, datetime('now'))
+  `INSERT INTO channels (id, name, scene_split, image_prompt, animation_motion, battle_card, updated_at)
+   VALUES (@id, @name, @scene_split, @image_prompt, @animation_motion, @battle_card, datetime('now'))
    ON CONFLICT(id) DO UPDATE SET
      name = excluded.name,
      scene_split = excluded.scene_split,
      image_prompt = excluded.image_prompt,
      animation_motion = excluded.animation_motion,
-     visual_source = excluded.visual_source,
      battle_card = excluded.battle_card,
      updated_at = datetime('now')`
 );
 const deleteStmt = db.prepare("DELETE FROM channels WHERE id = ?");
 
-function normSource(s: unknown): VisualSource {
-  return s === "science" ? "science" : "ai";
-}
 function toBool(v: unknown): boolean {
   return v === 1 || v === "1" || v === true;
 }
@@ -62,7 +52,6 @@ interface Row {
   scene_split: string;
   image_prompt: string;
   animation_motion: string;
-  visual_source: unknown;
   battle_card: unknown;
   created_at?: string;
   updated_at?: string;
@@ -74,7 +63,6 @@ function mapRow(r: Row): Channel {
     scene_split: r.scene_split,
     image_prompt: r.image_prompt,
     animation_motion: r.animation_motion,
-    visual_source: normSource(r.visual_source),
     battle_card: toBool(r.battle_card),
     created_at: r.created_at,
     updated_at: r.updated_at,
@@ -96,7 +84,6 @@ export function upsertChannel(c: {
   scene_split?: string;
   image_prompt?: string;
   animation_motion?: string;
-  visual_source?: string;
   battle_card?: boolean | string;
 }): void {
   upsertStmt.run({
@@ -105,7 +92,6 @@ export function upsertChannel(c: {
     scene_split: c.scene_split ?? "",
     image_prompt: c.image_prompt ?? "",
     animation_motion: c.animation_motion ?? "",
-    visual_source: normSource(c.visual_source),
     battle_card: toBool(c.battle_card) ? "1" : "0",
   });
 }
@@ -116,8 +102,9 @@ export function deleteChannel(id: string): void {
 
 /**
  * Resolve the prompts + behavior for a run. A channel's empty prompt fields fall
- * back to the global /prompts defaults. No channel → global prompts, AI visuals,
- * no stat card.
+ * back to the global /prompts defaults. No channel → global prompts, no stat card.
+ * (The visual type of each scene — AI / real photo / real person — is decided
+ * per scene by the scene-split prompt, not by a channel-wide switch.)
  */
 export function resolveChannel(channelId: string | null | undefined): ResolvedChannel {
   const globalScene = getPrompt("scene_split");
@@ -132,7 +119,6 @@ export function resolveChannel(channelId: string | null | undefined): ResolvedCh
       sceneSplit: globalScene,
       imageStyle: globalImage,
       animationMotion: globalMotion,
-      visualSource: "ai",
       battleCard: false,
     };
   }
@@ -142,7 +128,6 @@ export function resolveChannel(channelId: string | null | undefined): ResolvedCh
     sceneSplit: ch.scene_split.trim() || globalScene,
     imageStyle: ch.image_prompt.trim() || globalImage,
     animationMotion: ch.animation_motion.trim() || globalMotion,
-    visualSource: ch.visual_source,
     battleCard: ch.battle_card,
   };
 }
