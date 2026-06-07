@@ -15,6 +15,7 @@ export const SETTING_KEYS = [
   "ANTHROPIC_API_KEY",       // Claude (alternative to Gemini)
   "OPENAI_API_KEY",          // OpenAI TTS / image backup
   "FAL_API_KEY",             // fal.ai (alternative to Replicate)
+  "PEXELS_API_KEY",          // Pexels — real stock footage (video + photo). One key per line for multiple.
   "FFMPEG_PATH",             // absolute path to ffmpeg.exe if not in system PATH
 
   // ── Storage ───────────────────────────────────────────────────────
@@ -48,6 +49,11 @@ export const SETTING_KEYS = [
   "IMAGE_MODEL",             // e.g. nano-banana-pro, imagen-4, seedream-4.5
   "IMAGE_RATIO",             // e.g. 16:9, 9:16, 1:1
   "IMAGE_RESOLUTION",        // 1k | 2k | 4k (for models that support it)
+
+  // ── Stock footage (Pexels) ────────────────────────────────────────
+  "STOCK_FOOTAGE_ORIENTATION",  // landscape | portrait | square
+  "STOCK_FOOTAGE_MAX_HEIGHT",   // max px height to download (e.g. 1080)
+  "STOCK_FOOTAGE_MIN_DURATION", // min stock clip length in seconds
 
   // ── Animations (img2vid) ──────────────────────────────────────────
   "ANIMATION_PROVIDER",      // off | 69labs | replicate | fal
@@ -150,6 +156,7 @@ export const DEFAULTS: Record<SettingKey, string> = {
   ANTHROPIC_API_KEY: "",
   OPENAI_API_KEY: "",
   FAL_API_KEY: "",
+  PEXELS_API_KEY: "",
   FFMPEG_PATH: "",
 
   // Storage — empty = use default (DATA_DIR/runs)
@@ -186,6 +193,11 @@ export const DEFAULTS: Record<SettingKey, string> = {
   IMAGE_MODEL: "nano-banana-pro",
   IMAGE_RATIO: "16:9",
   IMAGE_RESOLUTION: "1k",
+
+  // Stock footage (Pexels)
+  STOCK_FOOTAGE_ORIENTATION: "landscape",
+  STOCK_FOOTAGE_MAX_HEIGHT: "1080",
+  STOCK_FOOTAGE_MIN_DURATION: "4",
 
   // Animations
   ANIMATION_PROVIDER: "69labs",

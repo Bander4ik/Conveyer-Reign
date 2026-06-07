@@ -39,7 +39,19 @@ export default function NewRunPage() {
   const [characters, setCharacters] = useState<CharacterDraft[]>([]);
   const [busy, setBusy] = useState(false);
   const [stats, setStats] = useState<StatsResp | null>(null);
-  const [channels, setChannels] = useState<{ id: string; name: string; battle_card: boolean }[]>([]);
+  const [channels, setChannels] = useState<
+    {
+      id: string;
+      name: string;
+      clips_source: "none" | "ai" | "stock";
+      clips_ratio: number;
+      stills_source: "ai" | "stock";
+      real_subjects: boolean;
+      voiceover: boolean;
+      keep_clip_audio: boolean;
+      battle_card: boolean;
+    }[]
+  >([]);
   const [channelId, setChannelId] = useState("");
   const router = useRouter();
 
@@ -194,8 +206,47 @@ export default function NewRunPage() {
             ))}
           </select>
           <p style={{ color: "var(--fg-faint)", fontSize: 12.5, marginTop: 6 }}>
-            Use a saved channel&apos;s prompts &amp; stat-card setting. <a href="/channels">Manage channels</a>
+            Use a saved channel&apos;s settings &amp; prompts. <a href="/channels">Manage channels</a>
           </p>
+          {(() => {
+            const ch = channels.find((c) => c.id === channelId);
+            const parts: string[] = [`≈ ${scriptStats.scenes} scenes`];
+            if (!ch) {
+              parts.push("AI visuals (global settings)", "voiceover");
+            } else {
+              if (ch.clips_source === "none") parts.push("still images only");
+              else
+                parts.push(
+                  `${ch.clips_ratio}% ${ch.clips_source === "stock" ? "real stock" : "AI"} clips + stills`
+                );
+              parts.push(`${ch.stills_source === "stock" ? "real stock" : "AI"} stills`);
+              if (ch.real_subjects) parts.push("real photos for named subjects");
+              parts.push(
+                ch.voiceover
+                  ? "voiceover"
+                  : ch.keep_clip_audio
+                    ? "no voiceover (clip sound)"
+                    : "no voiceover (silent)"
+              );
+              if (ch.battle_card) parts.push("intro stat card");
+            }
+            return (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: "9px 11px",
+                  borderRadius: 8,
+                  background: "var(--surface-2)",
+                  border: "1px solid var(--border)",
+                  fontSize: 12.5,
+                  color: "var(--fg-muted)",
+                  lineHeight: 1.5,
+                }}
+              >
+                <strong style={{ color: "var(--fg)" }}>This run will generate:</strong> {parts.join(" · ")}
+              </div>
+            );
+          })()}
         </div>
         <div>
           <label className="label">Title (optional)</label>

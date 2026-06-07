@@ -120,7 +120,7 @@ export async function assembleVideo(
 }
 
 /** Reads the exact audio duration via ffprobe. */
-function probeDuration(filePath: string): Promise<number> {
+export function probeDuration(filePath: string): Promise<number> {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(filePath, (err, data) => {
       if (err) return reject(err);
@@ -132,6 +132,65 @@ function probeDuration(filePath: string): Promise<number> {
       }
       resolve(d);
     });
+  });
+}
+
+/**
+ * No-voiceover scenes still need a per-scene audio file so the assembly path
+ * (which always expects one) works unchanged. With keepClipAudio + a clip that
+ * has audio → extract the clip's own sound; otherwise → a silent track the
+ * length of the clip. Returns the duration used. The ffmpeg path is configured
+ * here because this runs during scene production, before assembleVideo sets it.
+ */
+export async function extractOrSilentAudio(
+  videoPath: string,
+  outPath: string,
+  keepClipAudio: boolean,
+  maxDurSec: number
+): Promise<number> {
+  const ffmpegPath = getSetting("FFMPEG_PATH");
+  if (ffmpegPath) {
+    ffmpeg.setFfmpegPath(ffmpegPath);
+    const ffprobePath = ffmpegPath.replace(/ffmpeg(\.exe)?$/i, "ffprobe$1");
+    if (fs.existsSync(ffprobePath)) ffmpeg.setFfprobePath(ffprobePath);
+  }
+  // Cap the no-voiceover scene length: a raw Pexels clip can be 10-30s, which
+  // would make one scene that long. A probe failure also falls back to maxDur.
+  let dur: number;
+  try {
+    dur = await probeDuration(videoPath);
+  } catch {
+    dur = maxDurSec;
+  }
+  dur = Math.min(dur, maxDurSec);
+  if (keepClipAudio) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg()
+          .input(videoPath)
+          .outputOptions(["-vn", "-acodec", "libmp3lame", "-q:a", "4"])
+          .on("error", reject)
+          .on("end", () => resolve())
+          .save(outPath);
+      });
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 0) return dur;
+    } catch {
+      // clip has no audio stream — fall through to a silent track
+    }
+  }
+  await silentTrack(outPath, dur);
+  return dur;
+}
+
+function silentTrack(outPath: string, durationSec: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input("anullsrc=r=44100:cl=stereo")
+      .inputOptions(["-f lavfi"])
+      .outputOptions([`-t ${Math.max(0.5, durationSec).toFixed(3)}`, "-c:a libmp3lame", "-q:a 9"])
+      .on("error", reject)
+      .on("end", () => resolve())
+      .save(outPath);
   });
 }
 

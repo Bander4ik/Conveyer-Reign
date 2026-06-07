@@ -26,7 +26,8 @@ export async function generateImage(
   scene: Scene,
   outDir: string,
   characterRefs?: Record<string, string>,
-  imageStyle?: string
+  imageStyle?: string,
+  allowReal = true
 ): Promise<ImageResult> {
   const provider = (getSetting("IMAGE_PROVIDER") || "69labs").toLowerCase();
   const styleSuffix = imageStyle ?? getPrompt("image_prompt");
@@ -59,7 +60,7 @@ export async function generateImage(
 
   // Per-scene visual routing (set by the scene-split prompt): pull a real photo
   // instead of generating it, for real subjects / real people.
-  const vtype = scene.visual_type ?? "generated";
+  const vtype = allowReal ? (scene.visual_type ?? "generated") : "generated";
   if (vtype === "real_image" && scene.real_image_query) {
     const ok = await tryRealImage(runId, scene.real_image_query, filePath, "");
     if (ok) {

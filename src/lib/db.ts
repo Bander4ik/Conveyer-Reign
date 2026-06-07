@@ -87,6 +87,15 @@ db.prepare(
    WHERE battle_card IS NULL`
 ).run();
 
+// Channels v3 — per-channel visual-mix + audio config. NULL on rows that predate
+// these columns; channels.ts mapRow fills sensible defaults, so no back-fill here.
+tryAddColumn("channels", "clips_source TEXT");
+tryAddColumn("channels", "clips_ratio TEXT");
+tryAddColumn("channels", "stills_source TEXT");
+tryAddColumn("channels", "real_subjects TEXT");
+tryAddColumn("channels", "voiceover TEXT");
+tryAddColumn("channels", "keep_clip_audio TEXT");
+
 // Migrations for older DBs. SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT
 // EXISTS`, so we attempt and ignore failure when the column already exists.
 function tryAddColumn(table: string, columnDecl: string): void {

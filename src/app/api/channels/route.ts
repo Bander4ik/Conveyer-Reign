@@ -16,17 +16,16 @@ export async function POST(req: Request) {
     scene_split?: string;
     image_prompt?: string;
     animation_motion?: string;
+    clips_source?: string;
+    clips_ratio?: number | string;
+    stills_source?: string;
+    real_subjects?: boolean | string;
+    voiceover?: boolean | string;
+    keep_clip_audio?: boolean | string;
     battle_card?: boolean | string;
   };
   const id = body.id?.trim() || randomUUID();
-  upsertChannel({
-    id,
-    name: body.name ?? "",
-    scene_split: body.scene_split ?? "",
-    image_prompt: body.image_prompt ?? "",
-    animation_motion: body.animation_motion ?? "",
-    battle_card: body.battle_card,
-  });
+  upsertChannel({ ...body, id, name: body.name ?? "" });
   return NextResponse.json({ id });
 }
 

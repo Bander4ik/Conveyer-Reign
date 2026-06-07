@@ -1,35 +1,76 @@
 "use client";
 import { useEffect, useState } from "react";
 
+type ClipsSource = "none" | "ai" | "stock";
+type StillsSource = "ai" | "stock";
+
 interface Channel {
   id: string;
   name: string;
   scene_split: string;
   image_prompt: string;
   animation_motion: string;
+  clips_source: ClipsSource;
+  clips_ratio: number;
+  stills_source: StillsSource;
+  real_subjects: boolean;
+  voiceover: boolean;
+  keep_clip_audio: boolean;
   battle_card: boolean;
 }
 
-const BATTLE_HELP =
-  "Adds an intro “VS” stat card (e.g. weight / bite force / speed) at the start of the video. " +
-  "Works with any content — turn it on for matchup videos.";
-
-const SCENE_SPLIT_HELP =
-  "How the LLM slices your script into scenes. This prompt also decides EACH scene's visual per scene — " +
-  "so one video can freely mix AI footage, real photos, and real people. Add a \"visual_type\" of " +
-  "\"generated\" (AI), \"real_image\" (a real photo via \"real_image_query\"), or \"person_overlay\" " +
-  "(a real person via \"wikipedia_lookup\" + \"person_name\"). No visual_type = generated.";
+const HELP = {
+  clips:
+    "Whether scenes move (video) or stay still images, and whether the moving clips are AI-generated (Veo) or real found footage (Pexels).",
+  ratio: "How many scenes become moving clips — the rest are still images.",
+  stills: "How the still scenes look — AI-generated (nano-banana) or real stock photos (Pexels).",
+  real:
+    "When your script names a real planet / scientist / place, pull an ACTUAL photo of it from Wikipedia (overrides the choices above for those scenes).",
+  voiceover:
+    "Whether an AI narrator reads your script. Off = no narration; the video plays the clips' own sound instead.",
+  keepClipAudio:
+    "Use the ambient sound Veo generates on its AI clips (handy when voiceover is off, so the video isn't silent).",
+  battle:
+    "Adds an intro “VS” stat card (e.g. weight / bite force / speed) at the start. Works on top of any visual setup.",
+  sceneSplit:
+    "How the LLM slices your script into scenes. It can also tag each scene's visual per scene (visual_type: real_image / person_overlay) so a real subject pulls a real photo even in an AI channel.",
+};
 
 function blank(defaults: Pick<Channel, "scene_split" | "image_prompt" | "animation_motion">): Channel {
   return {
     id: "",
     name: "",
+    clips_source: "ai",
+    clips_ratio: 50,
+    stills_source: "ai",
+    real_subjects: true,
+    voiceover: true,
+    keep_clip_audio: false,
     battle_card: false,
     scene_split: defaults.scene_split,
     image_prompt: defaults.image_prompt,
     animation_motion: defaults.animation_motion,
   };
 }
+
+function summary(c: Channel): string {
+  const parts: string[] = [];
+  if (c.clips_source === "none") parts.push("stills only");
+  else parts.push(`${c.clips_ratio}% ${c.clips_source === "stock" ? "stock" : "AI"} clips`);
+  parts.push(`${c.stills_source === "stock" ? "stock" : "AI"} stills`);
+  if (c.real_subjects) parts.push("real subjects");
+  parts.push(c.voiceover ? "voiceover" : "no voiceover");
+  if (c.battle_card) parts.push("stat card");
+  return parts.join(" · ");
+}
+
+const labelStyle = { fontWeight: 600, fontSize: 13, color: "var(--fg)", marginBottom: 2, display: "block" } as const;
+const helpStyle = {
+  color: "var(--fg-faint)",
+  fontSize: 12,
+  margin: "4px 0 0",
+  lineHeight: 1.45,
+} as const;
 
 export default function ChannelsPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -84,14 +125,15 @@ export default function ChannelsPage() {
     await load();
   }
 
+  const e = editing;
+
   return (
     <div>
       <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>Channels</h1>
       <p style={{ color: "var(--fg-muted)", marginBottom: 16, lineHeight: 1.6 }}>
         Save a separate setup per channel so different content never gets mixed up. Pick a channel on
-        the <strong>New run</strong> page and the run uses its prompts. A new channel starts from your
-        global <a href="/prompts">Prompts</a> defaults. The look of each scene (AI vs real photo) is
-        decided per scene by the Scene Split prompt — so one video can mix freely.
+        the <strong>New run</strong> page and the run uses its settings + prompts. A new channel starts
+        from your global <a href="/prompts">Prompts</a> defaults.
       </p>
 
       <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -105,7 +147,7 @@ export default function ChannelsPage() {
               <p style={{ color: "var(--fg-faint)", fontSize: 13, margin: 0 }}>No channels yet.</p>
             )}
             {channels.map((c) => {
-              const active = editing?.id === c.id && !!c.id;
+              const active = e?.id === c.id && !!c.id;
               return (
                 <button
                   key={c.id}
@@ -124,7 +166,7 @@ export default function ChannelsPage() {
                   }}
                 >
                   <span style={{ fontWeight: 600, fontSize: 13.5 }}>{c.name}</span>
-                  {c.battle_card && <span className="badge badge-accent">stat card</span>}
+                  <span style={{ fontSize: 11, color: "var(--fg-faint)" }}>{summary(c)}</span>
                 </button>
               );
             })}
@@ -132,69 +174,121 @@ export default function ChannelsPage() {
         </div>
 
         {/* Editor */}
-        {editing ? (
-          <div className="card" style={{ flex: 1, minWidth: 360, display: "grid", gap: 14 }}>
+        {e ? (
+          <div className="card" style={{ flex: 1, minWidth: 380, display: "grid", gap: 16 }}>
             <div>
-              <label className="label">Channel name</label>
+              <label style={labelStyle}>Channel name</label>
               <input
                 className="input"
-                value={editing.name}
-                placeholder="e.g. Science, Animal Battles"
-                onChange={(e) => set("name", e.target.value)}
+                value={e.name}
+                placeholder="e.g. Animal Battles, Space Science"
+                onChange={(ev) => set("name", ev.target.value)}
               />
             </div>
 
-            <div>
-              <label className="label">Battle stat card</label>
-              <select
-                className="input"
-                value={editing.battle_card ? "1" : "0"}
-                onChange={(e) => set("battle_card", e.target.value === "1")}
-              >
+            {/* VISUALS */}
+            <div style={{ display: "grid", gap: 12 }}>
+              <h3 style={{ fontWeight: 700, fontSize: 13, letterSpacing: "0.02em", color: "var(--fg-muted)", textTransform: "uppercase", margin: 0 }}>
+                Visuals — what each scene looks like
+              </h3>
+
+              <div>
+                <label style={labelStyle}>Moving clips</label>
+                <select className="input" value={e.clips_source} onChange={(ev) => set("clips_source", ev.target.value as ClipsSource)}>
+                  <option value="none">None — still images only</option>
+                  <option value="ai">AI-generated (Veo)</option>
+                  <option value="stock">Real stock footage (Pexels)</option>
+                </select>
+                <p style={helpStyle}>{HELP.clips}</p>
+              </div>
+
+              {e.clips_source !== "none" && (
+                <div>
+                  <label style={labelStyle}>How many scenes are clips: {e.clips_ratio}%</label>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={e.clips_ratio}
+                    onChange={(ev) => set("clips_ratio", Number(ev.target.value))}
+                    style={{ width: "100%" }}
+                  />
+                  <p style={helpStyle}>{HELP.ratio}</p>
+                </div>
+              )}
+
+              <div>
+                <label style={labelStyle}>Still images</label>
+                <select className="input" value={e.stills_source} onChange={(ev) => set("stills_source", ev.target.value as StillsSource)}>
+                  <option value="ai">AI-generated (nano-banana)</option>
+                  <option value="stock">Real stock photos (Pexels)</option>
+                </select>
+                <p style={helpStyle}>{HELP.stills}</p>
+              </div>
+
+              <div>
+                <label style={labelStyle}>Real photos of real subjects (Wikipedia)</label>
+                <select className="input" value={e.real_subjects ? "1" : "0"} onChange={(ev) => set("real_subjects", ev.target.value === "1")}>
+                  <option value="1">On</option>
+                  <option value="0">Off</option>
+                </select>
+                <p style={helpStyle}>{HELP.real}</p>
+              </div>
+            </div>
+
+            {/* AUDIO */}
+            <div style={{ display: "grid", gap: 12, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+              <h3 style={{ fontWeight: 700, fontSize: 13, letterSpacing: "0.02em", color: "var(--fg-muted)", textTransform: "uppercase", margin: 0 }}>
+                Audio
+              </h3>
+              <div>
+                <label style={labelStyle}>Voiceover</label>
+                <select className="input" value={e.voiceover ? "1" : "0"} onChange={(ev) => set("voiceover", ev.target.value === "1")}>
+                  <option value="1">On — AI narration</option>
+                  <option value="0">Off — no narration</option>
+                </select>
+                <p style={helpStyle}>{HELP.voiceover}</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Keep AI clip sounds</label>
+                <select className="input" value={e.keep_clip_audio ? "1" : "0"} onChange={(ev) => set("keep_clip_audio", ev.target.value === "1")}>
+                  <option value="0">Off</option>
+                  <option value="1">On</option>
+                </select>
+                <p style={helpStyle}>{HELP.keepClipAudio}</p>
+              </div>
+            </div>
+
+            {/* OVERLAY */}
+            <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+              <label style={labelStyle}>Battle stat card</label>
+              <select className="input" value={e.battle_card ? "1" : "0"} onChange={(ev) => set("battle_card", ev.target.value === "1")}>
                 <option value="0">Off</option>
                 <option value="1">On — intro VS stat card</option>
               </select>
-              <p style={{ color: "var(--fg-faint)", fontSize: 12.5, marginTop: 6, lineHeight: 1.5 }}>
-                {BATTLE_HELP}
-              </p>
+              <p style={helpStyle}>{HELP.battle}</p>
             </div>
 
-            <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, display: "grid", gap: 12 }}>
+            {/* PROMPTS */}
+            <div style={{ display: "grid", gap: 12, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+              <h3 style={{ fontWeight: 700, fontSize: 13, letterSpacing: "0.02em", color: "var(--fg-muted)", textTransform: "uppercase", margin: 0 }}>
+                Prompts — you write these
+              </h3>
               <div>
-                <label className="label">Scene Split prompt</label>
-                <p style={{ color: "var(--fg-faint)", fontSize: 12, margin: "0 0 6px", lineHeight: 1.5 }}>
-                  {SCENE_SPLIT_HELP}
-                </p>
-                <textarea
-                  className="textarea"
-                  rows={12}
-                  value={editing.scene_split}
-                  onChange={(e) => set("scene_split", e.target.value)}
-                />
+                <label style={labelStyle}>Scene Split prompt</label>
+                <p style={helpStyle}>{HELP.sceneSplit}</p>
+                <textarea className="textarea" rows={10} style={{ marginTop: 6 }} value={e.scene_split} onChange={(ev) => set("scene_split", ev.target.value)} />
               </div>
               <div>
-                <label className="label">Image Style prompt</label>
-                <p style={{ color: "var(--fg-faint)", fontSize: 12, margin: "0 0 6px" }}>
-                  The look applied to every AI image (e.g. “cinematic, film-grain, moody light”).
-                </p>
-                <textarea
-                  className="textarea"
-                  rows={4}
-                  value={editing.image_prompt}
-                  onChange={(e) => set("image_prompt", e.target.value)}
-                />
+                <label style={labelStyle}>Image Style prompt</label>
+                <p style={helpStyle}>The look applied to every AI image (e.g. “cinematic, film-grain, moody light”).</p>
+                <textarea className="textarea" rows={4} style={{ marginTop: 6 }} value={e.image_prompt} onChange={(ev) => set("image_prompt", ev.target.value)} />
               </div>
               <div>
-                <label className="label">Animation Motion prompt</label>
-                <p style={{ color: "var(--fg-faint)", fontSize: 12, margin: "0 0 6px" }}>
-                  How the Veo clips move (subtle parallax vs dramatic motion).
-                </p>
-                <textarea
-                  className="textarea"
-                  rows={3}
-                  value={editing.animation_motion}
-                  onChange={(e) => set("animation_motion", e.target.value)}
-                />
+                <label style={labelStyle}>Animation Motion prompt</label>
+                <p style={helpStyle}>How the AI (Veo) clips move — subtle parallax vs dramatic motion.</p>
+                <textarea className="textarea" rows={3} style={{ marginTop: 6 }} value={e.animation_motion} onChange={(ev) => set("animation_motion", ev.target.value)} />
               </div>
             </div>
 
@@ -203,12 +297,12 @@ export default function ChannelsPage() {
                 {saved ? "Saved ✓" : "Save channel"}
               </button>
               <button className="btn-danger" onClick={remove}>
-                {editing.id ? "Delete" : "Cancel"}
+                {e.id ? "Delete" : "Cancel"}
               </button>
             </div>
           </div>
         ) : (
-          <div className="card" style={{ flex: 1, minWidth: 360, color: "var(--fg-muted)" }}>
+          <div className="card" style={{ flex: 1, minWidth: 380, color: "var(--fg-muted)" }}>
             Select a channel on the left, or create a new one.
           </div>
         )}

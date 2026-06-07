@@ -12,7 +12,9 @@ import { synthesizeScene } from "./services/tts";
 import { generateImage } from "./services/image-gen";
 import { animateScene, pickScenesToAnimate } from "./services/img2vid";
 import { extractMatchup, renderStatCard, makeSilentAudio, CARD_DURATION_SEC } from "./services/battle-stats";
-import { assembleVideo, type AssembleInput } from "./services/video-assemble";
+import { assembleVideo, extractOrSilentAudio, type AssembleInput } from "./services/video-assemble";
+import { acquireStockClipForScene, acquireStockPhotoForScene, pexelsPreflight, type Orientation } from "./services/stock-footage";
+import type { TtsResult } from "./services/tts";
 import { getKeyCount } from "./services/labs69";
 import { syncRunToDrive } from "./services/run-upload";
 import { downloadReusedClip } from "./services/reuse";
@@ -108,17 +110,33 @@ export async function runPipeline(runId: string, script: string) {
     const limitTts = pLimit(ttsConcurrency);
     const limitAnim = pLimit(animConcurrency);
 
-    const animProvider = (getSetting("ANIMATION_PROVIDER") || "69labs").toLowerCase();
-    const animRatio = Number(getSetting("ANIMATION_RATIO_PERCENT") || "50");
-    const animDistRaw = (getSetting("ANIMATION_DISTRIBUTION") || "first-half").toLowerCase();
-    const animDistribution =
-      animDistRaw === "alternating" || animDistRaw === "random" || animDistRaw === "all"
-        ? (animDistRaw as "alternating" | "random" | "all")
-        : "first-half";
-    const animTargets =
-      animProvider !== "off"
-        ? pickScenesToAnimate(scenes, animRatio, animDistribution)
+    // Which scenes become moving clips (vs stills) — from the channel's
+    // clips_source + clips_ratio. Distribution is the global fine-tune setting.
+    const distRaw = (getSetting("ANIMATION_DISTRIBUTION") || "first-half").toLowerCase();
+    const distribution: "first-half" | "alternating" | "random" | "all" =
+      distRaw === "alternating" || distRaw === "random" || distRaw === "all" ? distRaw : "first-half";
+    const clipTargets =
+      channel.clipsSource !== "none"
+        ? pickScenesToAnimate(scenes, channel.clipsRatio, distribution)
         : new Set<number>();
+
+    // Stock (Pexels) options + per-run dedup sets (video & photo libraries differ).
+    const stockOrientationRaw = (getSetting("STOCK_FOOTAGE_ORIENTATION") || "landscape").toLowerCase();
+    const stockOrientation: Orientation =
+      stockOrientationRaw === "portrait" || stockOrientationRaw === "square" ? stockOrientationRaw : "landscape";
+    const stockMaxHeight = Math.max(360, Number(getSetting("STOCK_FOOTAGE_MAX_HEIGHT") || "1080"));
+    const stockMinDuration = Math.max(1, Number(getSetting("STOCK_FOOTAGE_MIN_DURATION") || "4"));
+    const usedVideoIds = new Set<number>();
+    const usedPhotoIds = new Set<number>();
+
+    // Fail fast on a missing/invalid Pexels key BEFORE spending any TTS credits.
+    if (channel.clipsSource === "stock" || channel.stillsSource === "stock") {
+      try {
+        await pexelsPreflight(runId);
+      } catch (err) {
+        throw new Error(`Stock footage needs a valid Pexels API key — ${(err as Error).message}`);
+      }
+    }
 
     // Worker-pool concurrency. Bounds peak RAM by capping the number of pending
     // scene closures and plimit queue depth — instead of creating one async
@@ -131,7 +149,11 @@ export async function runPipeline(runId: string, script: string) {
     log(
       runId,
       "info",
-      `Generating ${scenes.length} scenes. Keys: ${keyCount} · Concurrency (per key × keys): TTS=${ttsConcurrencyPerKey}×${keyCount}=${ttsConcurrency}, image=${imageConcurrencyPerKey}×${keyCount}=${imageConcurrency}, anim=${animConcurrencyPerKey}×${keyCount}=${animConcurrency}. Animation: ${animProvider !== "off" ? `${animTargets.size}/${scenes.length} scenes (${animDistribution})` : "off"} · workers=${WORKER_COUNT}`,
+      `Generating ${scenes.length} scenes. Keys: ${keyCount} · clips: ${
+        channel.clipsSource === "none"
+          ? "none (stills only)"
+          : `${clipTargets.size}/${scenes.length} ${channel.clipsSource} (${distribution})`
+      } · stills: ${channel.stillsSource} · voiceover: ${channel.voiceover ? "on" : "off"} · workers=${WORKER_COUNT}`,
       { stage: "pipeline" }
     );
 
@@ -142,60 +164,154 @@ export async function runPipeline(runId: string, script: string) {
 
     const processScene = async (scene: typeof scenes[number]): Promise<SceneResult> => {
       try {
-        // Cancellation check before starting new scene tasks.
-        // Already-running tasks complete naturally.
         checkCancelled(runId);
-        const [audio, image] = await Promise.all([
-          limitTts(() => synthesizeScene(runId, scene, audioDir)),
-          limitImg(() =>
-            generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle)
-          ),
-        ]);
-
-        // 2b. If this scene is in the animation target set, start the img2vid
-        //     job RIGHT NOW — no need to wait for other scenes' images.
-        //     If the user pre-selected a Drive clip to reuse for this scene,
-        //     download it instead of running animateScene (skips Veo entirely).
-        let videoPath: string | null = null;
+        const pad = String(scene.index).padStart(3, "0");
         const reuseFileId = reuseMap[String(scene.index)];
-        if (reuseFileId) {
-          try {
-            videoPath = await downloadReusedClip(runId, scene, reuseFileId, animDir);
-          } catch (e) {
-            log(
-              runId,
-              "warn",
-              `reuse #${scene.index} failed, falling back to live img2vid: ${(e as Error).message}`,
-              { stage: "reuse" }
+
+        // Real subject → real Wikipedia photo (still, never animated).
+        const isRealSubject =
+          channel.realSubjects &&
+          (scene.visual_type === "real_image" || scene.visual_type === "person_overlay");
+        // Clip scene → moving footage (AI Veo or real stock), per the ratio.
+        const isClip =
+          !isRealSubject && channel.clipsSource !== "none" && clipTargets.has(scene.index);
+
+        // ── Produce the visual ──────────────────────────────────────────────
+        const makeVisual = async (): Promise<{
+          imagePath: string;
+          videoPath: string | null;
+          jobId?: string;
+          provider: string;
+        }> => {
+          if (isRealSubject) {
+            const img = await limitImg(() =>
+              generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, true)
             );
+            return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
           }
-        }
-        if (!videoPath && animTargets.has(scene.index) && image.provider !== "wikimedia") {
-          try {
-            videoPath = await limitAnim(() =>
-              animateScene(runId, scene, image.filePath, animDir, {
-                providerJobId: image.providerJobId,
-                imageProvider: image.provider,
-                motionStyle: channel.animationMotion,
-              })
+
+          if (isClip) {
+            // Reuse a pre-selected Drive clip if present.
+            if (reuseFileId) {
+              try {
+                const v = await downloadReusedClip(runId, scene, reuseFileId, animDir);
+                return { imagePath: v, videoPath: v, provider: "reuse" };
+              } catch (e) {
+                log(runId, "warn", `reuse #${scene.index} failed: ${(e as Error).message}`, { stage: "reuse" });
+              }
+            }
+            // Real stock video clip (fall back to an AI image if none is found).
+            if (channel.clipsSource === "stock") {
+              const v = path.join(animDir, `scene_${pad}.mp4`);
+              try {
+                await limitAnim(() =>
+                  acquireStockClipForScene(scene, v, {
+                    runId,
+                    orientation: stockOrientation,
+                    maxHeight: stockMaxHeight,
+                    minDuration: stockMinDuration,
+                    usedIds: usedVideoIds,
+                  })
+                );
+                return { imagePath: v, videoPath: v, provider: "stock" };
+              } catch (e) {
+                log(runId, "warn", `Stock clip #${scene.index} unavailable, using AI image: ${(e as Error).message.slice(0, 140)}`, {
+                  stage: "animate",
+                });
+                const img = await limitImg(() =>
+                  generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects)
+                );
+                return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
+              }
+            }
+            // AI clip: AI image → Veo (Ken-Burns fallback on failure).
+            const img = await limitImg(() =>
+              generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects)
             );
-          } catch (e) {
-            log(
-              runId,
-              "warn",
-              `img2vid #${scene.index} failed, falling back to Ken-Burns: ${(e as Error).message}`,
-              { stage: "animate" }
+            let videoPath: string | null = null;
+            if (img.provider !== "wikimedia") {
+              try {
+                videoPath = await limitAnim(() =>
+                  animateScene(runId, scene, img.filePath, animDir, {
+                    providerJobId: img.providerJobId,
+                    imageProvider: img.provider,
+                    motionStyle: channel.animationMotion,
+                  })
+                );
+              } catch (e) {
+                log(runId, "warn", `img2vid #${scene.index} failed, using Ken-Burns: ${(e as Error).message}`, {
+                  stage: "animate",
+                });
+              }
+            }
+            return { imagePath: img.filePath, videoPath, jobId: img.providerJobId, provider: img.provider };
+          }
+
+          // Still scene.
+          if (channel.stillsSource === "stock") {
+            const p = path.join(imgDir, `scene_${pad}.jpg`);
+            try {
+              await limitImg(() =>
+                acquireStockPhotoForScene(scene, p, {
+                  runId,
+                  orientation: stockOrientation,
+                  maxHeight: stockMaxHeight,
+                  usedIds: usedPhotoIds,
+                })
+              );
+              return { imagePath: p, videoPath: null, provider: "stock" };
+            } catch (e) {
+              log(runId, "warn", `Stock photo #${scene.index} unavailable, using AI image: ${(e as Error).message.slice(0, 140)}`, {
+                stage: "image",
+              });
+              const img = await limitImg(() =>
+                generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects)
+              );
+              return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
+            }
+          }
+          const img = await limitImg(() =>
+            generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects)
+          );
+          return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
+        };
+
+        // Visual + (optional) voiceover in parallel.
+        const audioPromise: Promise<TtsResult | null> = channel.voiceover
+          ? limitTts(() => synthesizeScene(runId, scene, audioDir))
+          : Promise.resolve(null);
+        const [visual, ttsAudio] = await Promise.all([makeVisual(), audioPromise]);
+
+        // ── Audio ───────────────────────────────────────────────────────────
+        let audio: TtsResult;
+        if (ttsAudio) {
+          audio = ttsAudio;
+        } else {
+          // No voiceover: the clip's own sound (or silence), or a fixed-length
+          // silent track for stills — so assembly always has an audio file.
+          const aOut = path.join(audioDir, `scene_${pad}.mp3`);
+          if (visual.videoPath) {
+            const dur = await extractOrSilentAudio(
+              visual.videoPath,
+              aOut,
+              channel.keepClipAudio,
+              Math.max(2, Number(getSetting("SCENE_DURATION_SECONDS") || "5"))
             );
+            audio = { filePath: aOut, durationSec: dur };
+          } else {
+            const dur = Math.max(2, Number(getSetting("SCENE_DURATION_SECONDS") || "5"));
+            await makeSilentAudio(aOut, dur);
+            audio = { filePath: aOut, durationSec: dur };
           }
         }
 
         return {
           scene,
-          imagePath: image.filePath,
-          videoPath,
+          imagePath: visual.imagePath,
+          videoPath: visual.videoPath,
           audio,
-          _imgProviderJobId: image.providerJobId,
-          _imgProvider: image.provider,
+          _imgProviderJobId: visual.jobId,
+          _imgProvider: visual.provider,
         };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
