@@ -1,6 +1,7 @@
 import ffmpeg from "fluent-ffmpeg";
 import { getSetting } from "../settings";
 import { log } from "../logger";
+import { drawtextFont, escDrawtext } from "./fonts";
 
 /**
  * Battle data mode — builds an intro "VS" stat-comparison card for matchup
@@ -106,34 +107,18 @@ function sanitizeFighter(f: unknown): Fighter | null {
   return { name, stats };
 }
 
-// drawtext is picky: strip the characters that have meaning inside an ffmpeg
-// filtergraph so we never break the graph (text is best-effort cosmetic).
-function esc(s: string): string {
-  return s
-    .replace(/[\\:'%,\[\];=]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 40);
-}
-
-function fontFile(): string {
-  // Path is embedded in the filtergraph, so the Windows drive colon must be escaped.
-  if (process.platform === "win32") return "C\\:/Windows/Fonts/arialbd.ttf";
-  if (process.platform === "darwin") return "/System/Library/Fonts/Supplemental/Arial Bold.ttf";
-  return "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
-}
-
 /**
  * Render the VS stat card as a single PNG (w×h) via FFmpeg drawtext.
  * Generous margins so the assembly's static display never crops the text.
  */
 export function renderStatCard(matchup: Matchup, outPath: string, w: number, h: number): Promise<void> {
   applyFfmpegPath();
-  const font = fontFile();
+  const font = drawtextFont();
+  if (!font) throw new Error("no usable system font for the stat card");
   const leftX = `(w/2-text_w)/2`;
   const rightX = `w/2+(w/2-text_w)/2`;
   const dt = (text: string, x: string, y: number, size: number, color: string) =>
-    `drawtext=fontfile=${font}:text='${esc(text)}':x=${x}:y=${y}:fontsize=${size}:fontcolor=${color}`;
+    `drawtext=fontfile=${font}:text='${escDrawtext(text)}':x=${x}:y=${y}:fontsize=${size}:fontcolor=${color}`;
 
   const filters: string[] = [
     // center divider

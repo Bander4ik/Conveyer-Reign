@@ -2,6 +2,7 @@ import fs from "node:fs";
 import ffmpeg from "fluent-ffmpeg";
 import { getSetting } from "../settings";
 import { log } from "../logger";
+import { drawtextFont, escDrawtext } from "./fonts";
 
 /**
  * Science data mode — fetches a REAL image from Wikipedia for a named subject
@@ -104,33 +105,20 @@ export async function tryRealImage(
   }
 }
 
-function fontFile(): string {
-  if (process.platform === "win32") return "C\\:/Windows/Fonts/arialbd.ttf";
-  if (process.platform === "darwin") return "/System/Library/Fonts/Supplemental/Arial Bold.ttf";
-  return "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
-}
-
-function esc(s: string): string {
-  return s
-    .replace(/[\\:'%,\[\];=]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 48);
-}
-
 /** Fit the image into w×h (letterboxed) and burn a lower-third name label. */
 function normalizeAndLabel(src: string, outPath: string, w: number, h: number, label: string): Promise<void> {
   applyFfmpegPath();
-  const safe = esc(label);
+  const font = drawtextFont();
+  const safe = escDrawtext(label);
   const filters = [
     `scale=${w}:${h}:force_original_aspect_ratio=decrease`,
     `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=0x000000`,
     `setsar=1`,
   ];
-  if (safe) {
+  if (safe && font) {
     filters.push(`drawbox=x=0:y=${Math.round(h * 0.82)}:w=${w}:h=${Math.round(h * 0.12)}:color=0x000000@0.55:t=fill`);
     filters.push(
-      `drawtext=fontfile=${fontFile()}:text='${safe}':x=(w-text_w)/2:y=${Math.round(h * 0.845)}:fontsize=${Math.round(h / 22)}:fontcolor=0xffffff`
+      `drawtext=fontfile=${font}:text='${safe}':x=(w-text_w)/2:y=${Math.round(h * 0.845)}:fontsize=${Math.round(h / 22)}:fontcolor=0xffffff`
     );
   }
   return new Promise((resolve, reject) => {

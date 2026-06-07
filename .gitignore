@@ -12,3 +12,4 @@ data/runs/*
 Thumbs.db
 .vscode/
 .idea/
+.cache-fonts/
