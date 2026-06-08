@@ -6,6 +6,7 @@ import { log } from "../logger";
 import { pLimit } from "../plimit";
 import type { Scene } from "./scene-split";
 import type { TtsResult } from "./tts";
+import { writeSilentWav } from "./media-synth";
 
 export interface AssembleInput {
   scene: Scene;
@@ -183,15 +184,12 @@ export async function extractOrSilentAudio(
 }
 
 function silentTrack(outPath: string, durationSec: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input("anullsrc=r=44100:cl=stereo")
-      .inputOptions(["-f lavfi"])
-      .outputOptions([`-t ${Math.max(0.5, durationSec).toFixed(3)}`, "-c:a libmp3lame", "-q:a 9"])
-      .on("error", reject)
-      .on("end", () => resolve())
-      .save(outPath);
-  });
+  // lavfi-free silence: write a PCM WAV directly instead of `-f lavfi -i
+  // anullsrc`, which fails on ffmpeg builds without the lavfi input device.
+  // The Ken-Burns / static clips re-encode this to AAC, so the .mp3 name and
+  // WAV container don't matter.
+  writeSilentWav(outPath, Math.max(0.5, durationSec));
+  return Promise.resolve();
 }
 
 /**

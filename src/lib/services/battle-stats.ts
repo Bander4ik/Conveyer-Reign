@@ -1,7 +1,9 @@
 import ffmpeg from "fluent-ffmpeg";
+import fs from "node:fs";
 import { getSetting } from "../settings";
 import { log } from "../logger";
 import { drawtextFont, escDrawtext } from "./fonts";
+import { writeSilentWav, writeSolidBmp } from "./media-synth";
 
 /**
  * Battle data mode — builds an intro "VS" stat-comparison card for matchup
@@ -138,28 +140,39 @@ export function renderStatCard(matchup: Matchup, outPath: string, w: number, h: 
     filters.push(dt(`${s.label} - ${s.value}`, rightX, statTop + i * lineH, statSize, "0xcfd2da"));
   });
 
+  // Solid background as a BMP file (NOT `-f lavfi -i color=`) so the card
+  // renders on ffmpeg builds that ship without the lavfi input device.
+  const bgPath = `${outPath}.bg.bmp`;
+  writeSolidBmp(bgPath, w, h, "0x0e0f13");
+  const cleanup = () => {
+    try {
+      if (fs.existsSync(bgPath)) fs.unlinkSync(bgPath);
+    } catch {
+      // best-effort temp cleanup
+    }
+  };
   return new Promise((resolve, reject) => {
     ffmpeg()
-      .input(`color=c=0x0e0f13:s=${w}x${h}`)
-      .inputOptions(["-f lavfi"])
+      .input(bgPath)
       .videoFilters(filters)
       .outputOptions(["-frames:v 1"])
-      .on("error", reject)
-      .on("end", () => resolve())
+      .on("error", (err) => {
+        cleanup();
+        reject(err);
+      })
+      .on("end", () => {
+        cleanup();
+        resolve();
+      })
       .save(outPath);
   });
 }
 
 /** A silent mp3 of the given length — gives the card clip its on-screen duration. */
 export function makeSilentAudio(outPath: string, durationSec: number): Promise<void> {
-  applyFfmpegPath();
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input("anullsrc=r=44100:cl=stereo")
-      .inputOptions(["-f lavfi"])
-      .outputOptions([`-t ${durationSec}`, "-c:a libmp3lame", "-q:a 9"])
-      .on("error", reject)
-      .on("end", () => resolve())
-      .save(outPath);
-  });
+  // lavfi-free silence: write a PCM WAV directly (some ffmpeg builds lack the
+  // lavfi input device). Downstream re-encodes the audio, so the .mp3 name is
+  // irrelevant — ffmpeg detects the WAV by content.
+  writeSilentWav(outPath, durationSec);
+  return Promise.resolve();
 }
