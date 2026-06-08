@@ -4,8 +4,9 @@ import fs from "node:fs";
 import db from "@/lib/db";
 import { ensureInit } from "@/lib/init";
 import { log } from "@/lib/logger";
-import { assembleVideo, type AssembleInput } from "@/lib/services/video-assemble";
+import { assembleVideo, extractOrSilentAudio, type AssembleInput } from "@/lib/services/video-assemble";
 import { synthesizeScene } from "@/lib/services/tts";
+import { writeSilentWav } from "@/lib/services/media-synth";
 import { generateImage } from "@/lib/services/image-gen";
 import { splitScript, type Scene } from "@/lib/services/scene-split";
 import { getRunDir } from "@/lib/run-paths";
@@ -33,6 +34,7 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
   const runDir = getRunDir(id);
   const audioDir = path.join(runDir, "audio");
   const imgDir = path.join(runDir, "images");
+  const animDir = path.join(runDir, "animations");
   if (!fs.existsSync(audioDir) && !fs.existsSync(imgDir)) {
     return NextResponse.json({ error: "no assets on disk" }, { status: 400 });
   }
@@ -69,16 +71,17 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
         fs.writeFileSync(scenesFile, JSON.stringify(scenes, null, 2), "utf-8");
       }
 
-      // 2. Find gaps
+      // 2. Find gaps. A scene's visual can be a clip (animations/*.mp4) OR a still
+      //    (AI .png / Pexels .jpg). Audio depends on the channel's mode: voiceover
+      //    → TTS; no voiceover → the clip's own sound or a silent track. Reassemble
+      //    must mirror that — otherwise it wrongly generates a voiceover for a
+      //    no-voiceover run.
       function audioPath(idx: number) {
         return path.join(audioDir, `scene_${String(idx).padStart(3, "0")}.mp3`);
       }
       function imageWritePath(idx: number) {
         return path.join(imgDir, `scene_${String(idx).padStart(3, "0")}.png`);
       }
-      // A scene's still can be an AI .png OR a Pexels stock .jpg — accept either,
-      // otherwise reassemble treats every stock photo as "missing" and overwrites
-      // it with a fresh AI image.
       function existingImage(idx: number): string | null {
         const png = imageWritePath(idx);
         if (fs.existsSync(png)) return png;
@@ -86,14 +89,22 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
         if (fs.existsSync(jpg)) return jpg;
         return null;
       }
-      const missingAudio = scenes.filter((s) => !fs.existsSync(audioPath(s.index)));
-      const missingImage = scenes.filter((s) => !existingImage(s.index));
+      function existingClip(idx: number): string | null {
+        const mp4 = path.join(animDir, `scene_${String(idx).padStart(3, "0")}.mp4`);
+        return fs.existsSync(mp4) ? mp4 : null;
+      }
+      const sceneDur = Math.max(2, Number(getSetting("SCENE_DURATION_SECONDS") || "5"));
 
-      if (missingAudio.length || missingImage.length) {
+      const missingAudio = scenes.filter((s) => !fs.existsSync(audioPath(s.index)));
+      // Only regenerate a still when a scene has NEITHER a clip NOR an image — we
+      // can't cheaply re-create a Veo clip, so fall back to a fresh AI still.
+      const missingVisual = scenes.filter((s) => !existingClip(s.index) && !existingImage(s.index));
+
+      if (missingAudio.length || missingVisual.length) {
         log(
           id,
           "info",
-          `Filling gaps: ${missingImage.length} images, ${missingAudio.length} audio files`,
+          `Filling gaps: ${missingVisual.length} visuals, ${missingAudio.length} audio (${channel.voiceover ? "voiceover" : "no voiceover"})`,
           { stage: "pipeline" }
         );
         const limitImg = pLimit(Math.max(1, Number(getSetting("IMAGE_CONCURRENCY") || "5")));
@@ -101,15 +112,25 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
 
         await Promise.all([
           ...missingAudio.map((s) =>
-            limitTts(() =>
-              synthesizeScene(id, s, audioDir).catch((e) => {
-                log(id, "warn", `Failed to regenerate audio #${s.index}: ${(e as Error).message}`, {
-                  stage: "tts",
-                });
-              })
-            )
+            limitTts(async () => {
+              try {
+                if (channel.voiceover) {
+                  await synthesizeScene(id, s, audioDir);
+                } else {
+                  // No voiceover: reuse the clip's own audio (or silence) — never TTS.
+                  const clip = existingClip(s.index);
+                  if (clip) {
+                    await extractOrSilentAudio(clip, audioPath(s.index), channel.keepClipAudio, sceneDur);
+                  } else {
+                    writeSilentWav(audioPath(s.index), sceneDur);
+                  }
+                }
+              } catch (e) {
+                log(id, "warn", `Failed to fill audio #${s.index}: ${(e as Error).message}`, { stage: "tts" });
+              }
+            })
           ),
-          ...missingImage.map((s) =>
+          ...missingVisual.map((s) =>
             limitImg(() =>
               generateImage(id, s, imgDir, undefined, channel.imageStyle, channel.realSubjects).catch((e) => {
                 log(id, "warn", `Failed to regenerate image #${s.index}: ${(e as Error).message}`, {
@@ -123,20 +144,24 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
         log(id, "info", "All assets present, running assembly only", { stage: "pipeline" });
       }
 
-      // 3. Assemble only scenes that have BOTH audio and image
+      // 3. Assemble every scene that has audio + a visual. Prefer the clip
+      //    (videoPath → rendered as a clip); otherwise Ken-Burns the still.
+      //    assembleVideo re-probes the real audio duration via ffprobe, so the
+      //    durationSec hint here is just a placeholder.
       const inputs: AssembleInput[] = [];
       for (const s of scenes) {
         const ap = audioPath(s.index);
-        const ip = existingImage(s.index);
-        if (!fs.existsSync(ap) || !ip) {
+        const clip = existingClip(s.index);
+        const img = existingImage(s.index);
+        if (!fs.existsSync(ap) || (!clip && !img)) {
           log(id, "warn", `Scene #${s.index} still incomplete — skipping`, { stage: "assemble" });
           continue;
         }
-        const stat = fs.statSync(ap);
         inputs.push({
           scene: s,
-          imagePath: ip,
-          audio: { filePath: ap, durationSec: Math.max(1, stat.size / 16000) },
+          imagePath: img ?? (clip as string),
+          videoPath: clip,
+          audio: { filePath: ap, durationSec: 1 },
         });
       }
       if (inputs.length === 0) throw new Error("No complete scenes found");
