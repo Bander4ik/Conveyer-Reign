@@ -19,7 +19,7 @@ export async function animateScene(
   scene: Scene,
   imagePath: string,
   outDir: string,
-  options: { providerJobId?: string; imageProvider?: string; motionStyle?: string } = {}
+  options: { providerJobId?: string; imageProvider?: string; motionStyle?: string; keepAudio?: boolean } = {}
 ): Promise<string | null> {
   const provider = (getSetting("ANIMATION_PROVIDER") || "off").toLowerCase();
   if (provider === "off") return null;
@@ -33,7 +33,7 @@ export async function animateScene(
   });
 
   if (provider === "69labs") {
-    await labs69Img2Vid(runId, scene, options.providerJobId, options.imageProvider, filePath, options.motionStyle);
+    await labs69Img2Vid(runId, scene, options.providerJobId, options.imageProvider, filePath, options.motionStyle, options.keepAudio);
   } else if (provider === "replicate") {
     await replicateImg2Vid(scene, imagePath, filePath);
   } else if (provider === "fal") {
@@ -52,13 +52,16 @@ async function labs69Img2Vid(
   providerJobId: string | undefined,
   imageProvider: string | undefined,
   outPath: string,
-  motionStyle?: string
+  motionStyle?: string,
+  keepAudioOverride?: boolean
 ) {
   const model = getSetting("ANIMATION_MODEL") || undefined;
   const aspectRatio = getSetting("IMAGE_RATIO") || undefined;
   const durationSetting = getSetting("ANIMATION_DURATION") || undefined;
-  // ANIMATION_KEEP_VEO_AUDIO=1 — keep Veo's generated audio (default: off, mute it).
-  const keepAudio = getSetting("ANIMATION_KEEP_VEO_AUDIO") === "1";
+  // Keep Veo's OWN audio when the channel asks for it (no-voiceover + keep clip
+  // audio); otherwise fall back to the global ANIMATION_KEEP_VEO_AUDIO setting.
+  // Without this, a no-voiceover channel got a muted clip → nothing to "keep".
+  const keepAudio = keepAudioOverride ?? (getSetting("ANIMATION_KEEP_VEO_AUDIO") === "1");
 
   // Live-photo style: per-scene visual prompt + motion-style suffix
   // (channel override when set, otherwise the global /prompts value).

@@ -236,6 +236,9 @@ export async function runPipeline(runId: string, script: string) {
                     providerJobId: img.providerJobId,
                     imageProvider: img.provider,
                     motionStyle: channel.animationMotion,
+                    // No voiceover + keep-clip-audio → generate Veo WITH its own
+                    // sound (otherwise the clip is muted and there's nothing to keep).
+                    keepAudio: !channel.voiceover && channel.keepClipAudio,
                   })
                 );
               } catch (e) {

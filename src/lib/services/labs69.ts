@@ -87,13 +87,36 @@ export function getKeyCount(): number {
  *   • img2vid with imageJobId requires the same key as the source image
  */
 const jobKeyMap = new Map<string, string>();
+// jobIds whose pool slot has already been released — makes releaseJob idempotent
+// (a download's finally + an error path can both try to release the same job).
+const releasedSlots = new Set<string>();
+const MAX_JOB_BINDINGS = 4000;
 
-/** Release a job's slot manually (used in caller error/cleanup paths). */
+/** Bind a jobId to the key that created it, bounding the map so it can't grow
+ *  unbounded over a long session (oldest-first eviction; the jobs that get reused
+ *  by img2vid are always recent). */
+function bindJob(jobId: string, key: string): void {
+  while (jobKeyMap.size >= MAX_JOB_BINDINGS) {
+    const oldest = jobKeyMap.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    jobKeyMap.delete(oldest);
+    releasedSlots.delete(oldest);
+  }
+  jobKeyMap.set(jobId, key);
+}
+
+/**
+ * Release a job's POOL SLOT (the load-balancing counter) but KEEP its key
+ * binding. A downloaded image job is reused by img2vid AFTER its slot is freed,
+ * and with more than one key the binding is the ONLY way to reach the SAME
+ * account again — otherwise 69labs returns 404 "Job not found" / 401. Idempotent.
+ */
 export function releaseJob(jobId: string) {
+  if (releasedSlots.has(jobId)) return;
   const key = jobKeyMap.get(jobId);
   if (key) {
     pool.release(key);
-    jobKeyMap.delete(jobId);
+    releasedSlots.add(jobId);
   }
 }
 
@@ -199,6 +222,24 @@ async function postJsonWithKey<T>(
 
     if (r.status === 403) {
       const errText = await r.text();
+      // Per-account "Concurrent generation limit reached (N)" is capacity, not a
+      // hard error — wait briefly and retry (slots free as other jobs finish)
+      // instead of failing the scene. Reuses the 429 retry budget.
+      const isConcurrentLimit = /concurrent/i.test(errText);
+      if (isConcurrentLimit && rateRetry < MAX_RATE_RETRIES) {
+        rateRetry++;
+        const waitMs = 4000;
+        if (ctx) {
+          log(
+            ctx.runId,
+            "warn",
+            `69labs concurrent-job limit (403) — waiting ${Math.round(waitMs / 1000)}s then retrying (${rateRetry}/${MAX_RATE_RETRIES})`,
+            { stage: ctx.stage }
+          );
+        }
+        await sleep(waitMs);
+        continue;
+      }
       const isCreditLimit = /credit limit|hourly|quota/i.test(errText);
       if (isCreditLimit && creditRetry < MAX_CREDIT_RETRIES) {
         creditRetry++;
@@ -221,6 +262,12 @@ async function postJsonWithKey<T>(
       throw new Error(`69labs POST ${path} 403: ${errText.slice(0, 400)}`);
     }
 
+    if (r.status === 401) {
+      const masked = key.length > 8 ? `${key.slice(0, 4)}…${key.slice(-4)}` : "****";
+      throw new Error(
+        `69labs POST ${path} 401 Unauthorized — API key ${masked} is invalid or has no access. Check each key in LABS69_API_KEY (Settings).`
+      );
+    }
     throw new Error(`69labs POST ${path} ${r.status}: ${(await r.text()).slice(0, 400)}`);
   }
 }
@@ -267,7 +314,7 @@ export async function createTtsJob(opts: {
         key,
         ctx
       );
-      jobKeyMap.set(resp.id, key);
+      bindJob(resp.id, key);
       return resp.id;
     }
     const body: Record<string, unknown> = {
@@ -286,7 +333,7 @@ export async function createTtsJob(opts: {
       if (opts.autoPauseFrequency !== undefined) body.autoPauseFrequency = opts.autoPauseFrequency;
     }
     const resp = await postJsonWithKey<JobCreatedResponse>("/tts/generate", body, key, ctx);
-    jobKeyMap.set(resp.id, key);
+    bindJob(resp.id, key);
     return resp.id;
   } catch (e) {
     pool.release(key);
@@ -322,7 +369,7 @@ export async function createImageJob(opts: {
       ctx
     );
     const id = "jobs" in resp ? resp.jobs[0].id : resp.id;
-    jobKeyMap.set(id, key);
+    bindJob(id, key);
     return id;
   } catch (e) {
     pool.release(key);
@@ -379,7 +426,7 @@ export async function createVideoJob(opts: {
       ctx
     );
     const id = "jobs" in resp ? resp.jobs[0].id : resp.id;
-    jobKeyMap.set(id, key);
+    bindJob(id, key);
     return id;
   } catch (e) {
     pool.release(key);
