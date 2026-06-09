@@ -27,9 +27,9 @@ const HELP = {
   real:
     "When your script names a real planet / scientist / place, pull an ACTUAL photo of it from Wikipedia (overrides the choices above for those scenes).",
   voiceover:
-    "Whether an AI narrator reads your script. Off = no narration; the video plays the clips' own sound instead.",
+    "Whether an AI narrator reads your script. Off = no narration — the video uses the clips' own sound if 'Keep clip sounds' is on below, otherwise it plays silent.",
   keepClipAudio:
-    "Use the ambient sound Veo generates on its AI clips (handy when voiceover is off, so the video isn't silent).",
+    "When voiceover is off, use each clip's own sound — the ambient audio Veo makes on AI clips, or the real audio of stock (Pexels) clips — so the video isn't silent.",
   battle:
     "Adds an intro “VS” stat card (e.g. weight / bite force / speed) at the start. Works on top of any visual setup.",
   sceneSplit:

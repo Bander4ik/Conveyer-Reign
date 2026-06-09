@@ -57,35 +57,47 @@ export async function assembleVideo(
   // 1. Render individual clips in PARALLEL (was sequential before).
   //    Preserve ordering by index — Promise.all does not guarantee completion order.
   const limitClip = pLimit(assembleConcurrency);
-  const indexed: ({ path: string; durationSec: number; index: number })[] = await Promise.all(
+  type RenderedClip = { path: string; durationSec: number; index: number };
+  const settled: (RenderedClip | null)[] = await Promise.all(
     scenes.map((item) =>
       limitClip(async () => {
         const clipPath = path.join(
           clipsDir,
           `clip_${String(item.scene.index).padStart(3, "0")}.mp4`
         );
-        const audioDuration = await probeDuration(item.audio.filePath);
-        // Total clip duration = audio + silence padding at the end so consecutive
-        // scenes get a natural breath between them after concat.
-        const clipDuration = audioDuration + tailSilence;
-        if (item.staticCard) {
-          await renderStaticClip(item.imagePath, item.audio.filePath, clipPath, w, h, fps, clipDuration, tailSilence);
-        } else if (item.videoPath) {
-          await renderAnimatedClip(item.videoPath, item.audio.filePath, clipPath, w, h, fps, clipDuration, tailSilence);
-        } else {
-          const zoomDirection: "in" | "out" = Math.random() < 0.5 ? "in" : "out";
-          await renderKenBurnsClip(item.imagePath, item.audio.filePath, clipPath, w, h, fps, clipDuration, zoomDirection, tailSilence);
+        try {
+          const audioDuration = await probeDuration(item.audio.filePath);
+          // Total clip duration = audio + silence padding at the end so consecutive
+          // scenes get a natural breath between them after concat.
+          const clipDuration = audioDuration + tailSilence;
+          if (item.staticCard) {
+            await renderStaticClip(item.imagePath, item.audio.filePath, clipPath, w, h, fps, clipDuration, tailSilence);
+          } else if (item.videoPath) {
+            await renderAnimatedClip(item.videoPath, item.audio.filePath, clipPath, w, h, fps, clipDuration, tailSilence);
+          } else {
+            const zoomDirection: "in" | "out" = Math.random() < 0.5 ? "in" : "out";
+            await renderKenBurnsClip(item.imagePath, item.audio.filePath, clipPath, w, h, fps, clipDuration, zoomDirection, tailSilence);
+          }
+          log(
+            runId,
+            "info",
+            `Clip #${item.scene.index} (${audioDuration.toFixed(1)}s audio + ${tailSilence}s silence = ${clipDuration.toFixed(1)}s, ${item.videoPath ? "img2vid" : "ken-burns"}) done`,
+            { stage: "assemble" }
+          );
+          return { path: clipPath, durationSec: clipDuration, index: item.scene.index };
+        } catch (e) {
+          // Isolate a bad asset: skip this ONE clip instead of failing the whole
+          // video at the final assembly stage (one corrupt clip used to abort all).
+          log(runId, "warn", `Clip #${item.scene.index} failed to render, skipping: ${(e as Error).message.slice(0, 160)}`, {
+            stage: "assemble",
+          });
+          return null;
         }
-        log(
-          runId,
-          "info",
-          `Clip #${item.scene.index} (${audioDuration.toFixed(1)}s audio + ${tailSilence}s silence = ${clipDuration.toFixed(1)}s, ${item.videoPath ? "img2vid" : "ken-burns"}) done`,
-          { stage: "assemble" }
-        );
-        return { path: clipPath, durationSec: clipDuration, index: item.scene.index };
       })
     )
   );
+  const indexed = settled.filter((c): c is RenderedClip => c !== null);
+  if (indexed.length === 0) throw new Error("All scene clips failed to render");
   indexed.sort((a, b) => a.index - b.index);
   const clipInfos = indexed.map((c) => ({ path: c.path, durationSec: c.durationSec }));
 
@@ -169,7 +181,10 @@ export async function extractOrSilentAudio(
       await new Promise<void>((resolve, reject) => {
         ffmpeg()
           .input(videoPath)
-          .outputOptions(["-vn", "-acodec", "libmp3lame", "-q:a", "4"])
+          // -t caps the extracted audio to the scene length. A raw Pexels clip can
+          // be 10-30s and assembly derives each scene's length from THIS file's
+          // duration (ffprobe), so without the trim one scene would run 10-30s.
+          .outputOptions([`-t ${dur.toFixed(3)}`, "-vn", "-acodec", "libmp3lame", "-q:a", "4"])
           .on("error", reject)
           .on("end", () => resolve())
           .save(outPath);
