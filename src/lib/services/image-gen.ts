@@ -112,6 +112,43 @@ export async function generateImage(
   return { filePath, provider };
 }
 
+/** Does a 69labs job error look like a content-moderation rejection? */
+function looksModerated(msg: string): boolean {
+  return /generation pipeline|restricted|misclassif|flagged|moderat|content policy|safety|nsfw/i.test(msg);
+}
+
+/** 69labs (and most image models) reject "violent" wording even for tasteful
+ *  wildlife/predator content (Reign's animal-battle channel hits this a lot).
+ *  When a job is flagged we retry once with a softened prompt: swap the trigger
+ *  words for neutral ones and bolt on a strong advertiser-safe clause. Crude,
+ *  but it rescues the scene instead of failing the whole run. */
+function softenPrompt(prompt: string): string {
+  const swaps: [RegExp, string][] = [
+    [/\bkill(?:s|ing|ed)?\b/gi, "confronting"],
+    [/\battack(?:s|ing|ed)?\b/gi, "approaching"],
+    [/\bblood(?:y|ied)?\b/gi, ""],
+    [/\bgore\b|\bgory\b/gi, ""],
+    [/\bfight(?:s|ing)?\b/gi, "facing off"],
+    [/\bprey\b/gi, "rival"],
+    [/\bbit(?:e|es|ing)\b/gi, "open jaws"],
+    [/\blung(?:e|es|ing)\b/gi, "leaping"],
+    [/\b(?:tear|tears|tearing|rip|rips|ripping)\b/gi, ""],
+    [/\b(?:savage|brutal|vicious|deadly|ferocious|violent|violence|bloodthirsty)\b/gi, "powerful"],
+    [/\b(?:carcass|corpse|dead)\b/gi, ""],
+    [/\b(?:wound|wounded|wounds|injury|injured|injuries)\b/gi, ""],
+    [/\bslash(?:es|ing)?\b/gi, "raised paw"],
+  ];
+  let out = prompt;
+  for (const [re, rep] of swaps) out = out.replace(re, rep);
+  out = out
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.])/g, "$1")
+    .replace(/([,.])\1+/g, "$1")
+    .replace(/[\s,.]+$/, "")
+    .trim();
+  return `${out}. Tasteful wildlife documentary photography, advertiser-friendly: no violence, no gore, no blood — show only the calm, tense moment before any action, natural and non-graphic.`;
+}
+
 async function labs69Image(runId: string, prompt: string, outPath: string, imageUrls?: string[]): Promise<string> {
   const model = getSetting("IMAGE_MODEL") || undefined; // server default = imagen-4
   let aspectRatio = getSetting("IMAGE_RATIO") || undefined;
@@ -134,15 +171,20 @@ async function labs69Image(runId: string, prompt: string, outPath: string, image
   const MAX_ATTEMPTS = 3;
   let lastErr: unknown;
   let lastJobId: string | null = null;
+  // These can change between attempts: a content-moderation failure swaps in a
+  // softened, reference-free prompt for the next try.
+  let currentPrompt = prompt;
+  let currentImageUrls = imageUrls;
+  let softened = false;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const jobId = await createImageJob({
-        prompt,
+        prompt: currentPrompt,
         model,
         aspectRatio,
         resolution,
-        imageUrls: imageUrls?.length ? imageUrls : undefined,
+        imageUrls: currentImageUrls?.length ? currentImageUrls : undefined,
         runId,
       });
       lastJobId = jobId;
@@ -173,6 +215,18 @@ async function labs69Image(runId: string, prompt: string, outPath: string, image
           // Free the key slot even on non-timeout errors so retries don't pile up
           releaseJob(lastJobId);
         }
+      }
+
+      // 69labs content moderation: the prompt (or a reference image) was flagged.
+      // Retrying the same text is pointless — soften it + drop refs once, then
+      // the remaining attempt(s) use the safe version.
+      if (!softened && looksModerated(msg)) {
+        currentPrompt = softenPrompt(prompt);
+        currentImageUrls = undefined;
+        softened = true;
+        log(runId, "warn", `Image #${path.basename(outPath)} flagged by the 69labs content filter — retrying with a softened, reference-free prompt`, {
+          stage: "image",
+        });
       }
 
       if (attempt < MAX_ATTEMPTS) {
