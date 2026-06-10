@@ -40,6 +40,19 @@ const MAIN_GROUPS: Group[] = [
       },
     ],
   },
+  {
+    title: "Stock Footage (Pexels)",
+    subtitle:
+      "Only needed when a channel uses REAL stock clips or photos (Moving clips / Still images set to \"Real stock footage\" in the channel editor). Channels that use AI visuals don't need this. Quality settings (orientation, resolution, minimum clip length) live in Advanced settings.",
+    fields: [
+      {
+        key: "PEXELS_API_KEY",
+        desc: "Free API key from Pexels — powers the real stock videos and photos. The free tier allows 200 requests/hour, 20,000/month.\n\nPRO TIP: you can paste multiple keys from different Pexels accounts (one per line, or comma-separated) — the app rotates to the next key when one hits its hourly limit, so long videos don't stall.",
+        examples: "Get it free: pexels.com/api → 'Get Started' · paste one key per line for multiple",
+        multiline: true,
+      },
+    ],
+  },
 ];
 
 interface GdriveStatus {

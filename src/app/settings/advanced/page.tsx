@@ -191,6 +191,28 @@ const GROUPS: Group[] = [
     ],
   },
   {
+    title: "Stock Footage (Pexels)",
+    subtitle:
+      "Quality controls for REAL stock clips and photos — used only by channels whose Moving clips / Still images are set to \"Real stock footage\". The Pexels API key itself lives on the main Settings page.",
+    fields: [
+      {
+        key: "STOCK_FOOTAGE_ORIENTATION",
+        desc: "Which shape of footage to search for on Pexels. Use `landscape` for normal 16:9 YouTube videos, `portrait` for Shorts / TikTok-style 9:16, `square` for 1:1.",
+        examples: "landscape (default)  ·  portrait  ·  square",
+      },
+      {
+        key: "STOCK_FOOTAGE_MAX_HEIGHT",
+        desc: "Maximum video height (in pixels) to download. 1080 keeps downloads fast and matches a Full-HD final video. Raise to 2160 only if you render in 4K — files get much larger and slower.",
+        examples: "1080 (default)  ·  720 for faster tests  ·  2160 for 4K",
+      },
+      {
+        key: "STOCK_FOOTAGE_MIN_DURATION",
+        desc: "Shortest stock clip (in seconds) the search will accept. Filters out 1-2 second micro-clips that would look choppy. Don't set it higher than your typical scene length or fewer clips will match.",
+        examples: "4 (default)  ·  range 1–10",
+      },
+    ],
+  },
+  {
     title: "Video Assembly (FFmpeg)",
     subtitle: "Final stitching step. Controls output resolution, framerate, and how scenes transition into each other.",
     fields: [
