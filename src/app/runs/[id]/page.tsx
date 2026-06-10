@@ -14,6 +14,33 @@ interface Run {
   title: string | null;
   status: "pending" | "running" | "done" | "error" | "cancelled";
   output_path: string | null;
+  config_json?: string | null;
+}
+
+/** Snapshot of what the run was configured to generate, written at creation. */
+interface GenerationPlan {
+  channelName: string | null;
+  clipsSource: "none" | "ai" | "stock";
+  clipsRatio: number;
+  stillsSource: "ai" | "stock";
+  realSubjects: boolean;
+  voiceover: boolean;
+  keepClipAudio: boolean;
+  battleCard: boolean;
+  imageModel: string;
+  animationModel: string;
+  voice: string;
+  characters: number;
+}
+
+function parsePlan(run: Run | null): GenerationPlan | null {
+  if (!run?.config_json) return null;
+  try {
+    const cfg = JSON.parse(run.config_json) as { generation?: GenerationPlan };
+    return cfg.generation ?? null;
+  } catch {
+    return null;
+  }
 }
 interface SceneAsset {
   index: number;
@@ -104,6 +131,44 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
 
   const fileUrl = (p: string, dl = false) => `/api/runs/${id}/file?p=${encodeURIComponent(p)}${dl ? "&download=1" : ""}`;
 
+  const plan = parsePlan(run);
+  const planRows: { label: string; value: string }[] = plan
+    ? [
+        {
+          label: "Moving clips",
+          value:
+            plan.clipsSource === "none"
+              ? "none — still images only"
+              : plan.clipsSource === "stock"
+                ? `${plan.clipsRatio}% of scenes — real stock footage (Pexels)`
+                : `${plan.clipsRatio}% of scenes — AI video (${plan.animationModel})`,
+        },
+        {
+          label: "Still images",
+          value:
+            plan.stillsSource === "stock"
+              ? "real stock photos (Pexels)"
+              : `AI images (${plan.imageModel})`,
+        },
+        ...(plan.realSubjects
+          ? [{ label: "Real subjects", value: "real photos from Wikipedia for named people/places" }]
+          : []),
+        {
+          label: "Audio",
+          value: plan.voiceover
+            ? `AI voiceover (${plan.voice})`
+            : plan.keepClipAudio
+              ? "no voiceover — clips' own sound"
+              : "no voiceover — silent",
+        },
+        ...(plan.battleCard ? [{ label: "Extras", value: 'intro "VS" stat card' }] : []),
+        ...(plan.characters > 0
+          ? [{ label: "Characters", value: `${plan.characters} recurring character${plan.characters === 1 ? "" : "s"}` }]
+          : []),
+        { label: "Channel", value: plan.channelName ?? "none — global settings" },
+      ]
+    : [];
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -120,6 +185,20 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
           {run && <span className={`tag tag-${run.status}`}>{run.status}</span>}
         </div>
       </div>
+
+      {plan && (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>🎛 What this run generates</div>
+          <div style={{ display: "grid", gridTemplateColumns: "130px 1fr", rowGap: 6, columnGap: 12, fontSize: 13 }}>
+            {planRows.map((r) => (
+              <div key={r.label} style={{ display: "contents" }}>
+                <div style={{ color: "var(--fg-muted)", fontWeight: 600 }}>{r.label}</div>
+                <div>{r.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {assets?.finalExists && (
         <div className="card" style={{ marginBottom: 12 }}>

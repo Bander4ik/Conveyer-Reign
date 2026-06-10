@@ -43,7 +43,7 @@ const MAIN_GROUPS: Group[] = [
   {
     title: "Stock Footage (Pexels)",
     subtitle:
-      "Only needed when a channel uses REAL stock clips or photos (Moving clips / Still images set to \"Real stock footage\" in the channel editor). Channels that use AI visuals don't need this. Quality settings (orientation, resolution, minimum clip length) live in Advanced settings.",
+      "Only needed when a channel uses REAL stock clips or photos. WHAT each video uses (AI vs real stock, for clips and photos separately) is chosen per channel on the Channels page — set Moving clips / Still images to \"Real stock footage\" there. Channels that use AI visuals don't need this key. Quality settings (orientation, resolution, minimum clip length) live in Advanced settings.",
     fields: [
       {
         key: "PEXELS_API_KEY",

@@ -6,6 +6,8 @@ import db from "@/lib/db";
 import { ensureInit } from "@/lib/init";
 import { runPipeline } from "@/lib/pipeline";
 import { sanitizeFolderName, pickAvailableFolderName, getRunDir } from "@/lib/run-paths";
+import { resolveChannel } from "@/lib/channels";
+import { getSetting } from "@/lib/settings";
 
 const insertRun = db.prepare(
   "INSERT INTO runs (id, title, folder_name, status, script, config_json) VALUES (?, ?, ?, 'pending', ?, ?)"
@@ -98,10 +100,27 @@ export async function POST(req: Request) {
     cast.push(entry);
   }
 
-  setConfig.run(
-    JSON.stringify({ characters: cast, channelId: (body.channelId ?? "").trim() || null }),
-    id
-  );
+  // Snapshot WHAT this run will generate (sources + audio + providers) into
+  // config_json, so the run page can show an accurate plan even if the channel
+  // or global settings are edited later.
+  const channelId = (body.channelId ?? "").trim() || null;
+  const ch = resolveChannel(channelId);
+  const generation = {
+    channelName: ch.channelName,
+    clipsSource: ch.clipsSource,
+    clipsRatio: ch.clipsRatio,
+    stillsSource: ch.stillsSource,
+    realSubjects: ch.realSubjects,
+    voiceover: ch.voiceover,
+    keepClipAudio: ch.keepClipAudio,
+    battleCard: ch.battleCard,
+    imageModel: getSetting("IMAGE_MODEL") || "nano-banana-pro",
+    animationModel: getSetting("ANIMATION_MODEL") || "veo-video",
+    voice: `${getSetting("TTS_VOICE_PROVIDER") || "elevenlabs"} · ${getSetting("TTS_VOICE_ID") || "default"}`,
+    characters: cast.length,
+  };
+
+  setConfig.run(JSON.stringify({ characters: cast, channelId, generation }), id);
 
   // Run the pipeline in the background. Fine for local single-user use.
   runPipeline(id, script).catch((e) => {

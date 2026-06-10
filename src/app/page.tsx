@@ -206,7 +206,10 @@ export default function NewRunPage() {
             ))}
           </select>
           <p style={{ color: "var(--fg-faint)", fontSize: 12.5, marginTop: 6 }}>
-            Use a saved channel&apos;s settings &amp; prompts. <a href="/channels">Manage channels</a>
+            The channel decides WHAT gets generated — AI or real stock (Pexels) for clips and photos,
+            voiceover or not, stat card. Want a different mix (e.g. only Pexels photos, or stock clips
+            + AI stills)? <a href="/channels">Create / edit a channel</a>. No channel = AI visuals +
+            voiceover from global settings.
           </p>
           {(() => {
             const ch = channels.find((c) => c.id === channelId);
