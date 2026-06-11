@@ -446,23 +446,52 @@ export async function pollJob(
 ): Promise<void> {
   const key = keyFor(jobId);
   const start = Date.now();
+  // POLL_MAX_MS is a STALL timeout (no progress), NOT a wall-clock cap. A
+  // congested model (e.g. Nano Banana Pro) can sit in 69labs' queue for a long
+  // time; we must not kill a job that's still advancing through the queue, or it
+  // gets re-queued at the back forever and never generates. We only give up when
+  // nothing changes for POLL_MAX_MS, with an absolute HARD_CAP as a backstop.
+  const HARD_CAP_MS = 30 * 60 * 1000;
+  let lastProgressAt = start;
+  let lastStatus: JobStatus | undefined;
+  let lastQueuePos: number | undefined;
   while (true) {
     const r = await fetchWithTimeout(`${BASE}/${kind}/status/${jobId}`, { headers: authHeadersFor(key) });
     if (!r.ok) {
       throw new Error(`69labs status ${kind}/${jobId} ${r.status}: ${(await r.text()).slice(0, 200)}`);
     }
-    const json = (await r.json()) as { status: JobStatus; userMessage?: string | null };
-    if (level !== "debug") {
+    const json = (await r.json()) as { status: JobStatus; userMessage?: string | null; queuePosition?: number | null };
+    const qp = typeof json.queuePosition === "number" ? json.queuePosition : undefined;
+
+    // Progress = a new status OR the queue position moved toward the front.
+    const advanced =
+      json.status !== lastStatus || (qp !== undefined && lastQueuePos !== undefined && qp < lastQueuePos);
+    if (advanced) lastProgressAt = Date.now();
+
+    // Surface the queue position so a slow run reads as "queued on 69labs" in the
+    // run log instead of a silent hang. Log only on change to avoid spamming.
+    if (qp !== undefined && qp !== lastQueuePos) {
+      log(runId, "info", `${kind} ${jobId.slice(0, 8)} queued on 69labs — position ${qp}`, { stage });
+    }
+    if (level !== "debug" && json.status !== lastStatus) {
       log(runId, level, `${kind} ${jobId.slice(0, 8)} → ${json.status}`, { stage });
     }
+    lastStatus = json.status;
+    lastQueuePos = qp;
+
     if (json.status === "COMPLETED") return;
     if (json.status === "FAILED" || json.status === "CANCELLED" || json.status === "CENSORED") {
       throw new Error(
         `69labs ${kind} job ${jobId} ${json.status}${json.userMessage ? `: ${json.userMessage}` : ""}`
       );
     }
-    if (Date.now() - start > POLL_MAX_MS) {
-      throw new Error(`69labs ${kind} job ${jobId} exceeded ${POLL_MAX_MS / 1000}s polling timeout`);
+    if (Date.now() - lastProgressAt > POLL_MAX_MS) {
+      throw new Error(
+        `69labs ${kind} job ${jobId} stalled — no progress for ${POLL_MAX_MS / 1000}s (status ${json.status}${qp !== undefined ? `, queue ${qp}` : ""}). The model may be overloaded; try a different IMAGE_MODEL.`
+      );
+    }
+    if (Date.now() - start > HARD_CAP_MS) {
+      throw new Error(`69labs ${kind} job ${jobId} exceeded ${HARD_CAP_MS / 60000}min hard cap (status ${json.status})`);
     }
     await sleep(POLL_INTERVAL_MS);
   }

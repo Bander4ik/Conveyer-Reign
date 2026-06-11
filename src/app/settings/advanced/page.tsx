@@ -139,7 +139,7 @@ const GROUPS: Group[] = [
       },
       {
         key: "IMAGE_MODEL",
-        desc: "The specific model. For photorealism try `imagen-4` (Google) or `seedream-4.5`. For balance of quality and detail try `nano-banana-pro` (default). For maximum hyperreal style try `flux-2-pro` (2 credits per image).",
+        desc: "The specific model. For photorealism try `imagen-4` (Google) or `seedream-4.5`. For balance of quality and detail try `nano-banana-pro` (default). For maximum hyperreal style try `flux-2-pro` (2 credits per image).\n\nIF IMAGES GET STUCK 'queued' for a long time: that model is overloaded on 69labs (the run log will show a queue position). Switch to a different model here — e.g. `imagen-4` or `seedream-4.5` — they're usually free of the queue. nano-banana-pro keeps faces most consistent for recurring characters, so prefer it when it's not congested.",
         examples: "nano-banana-pro, imagen-4, seedream-4.5, gpt-image-2, flux-2-pro",
       },
       {
