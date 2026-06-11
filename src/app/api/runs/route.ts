@@ -118,6 +118,9 @@ export async function POST(req: Request) {
     animationModel: getSetting("ANIMATION_MODEL") || "veo-video",
     voice: `${getSetting("TTS_VOICE_PROVIDER") || "elevenlabs"} · ${getSetting("TTS_VOICE_ID") || "default"}`,
     characters: cast.length,
+    imageProvider: (getSetting("IMAGE_PROVIDER") || "69labs").toLowerCase(),
+    animationProvider: (getSetting("ANIMATION_PROVIDER") || "69labs").toLowerCase(),
+    ttsProvider: (getSetting("TTS_PROVIDER") || "69labs").toLowerCase(),
   };
 
   setConfig.run(JSON.stringify({ characters: cast, channelId, generation }), id);

@@ -51,8 +51,8 @@ const GROUPS: Group[] = [
     fields: [
       {
         key: "TTS_PROVIDER",
-        desc: "Top-level routing of TTS jobs. `69labs` is the default and covers all sub-providers below. Direct `elevenlabs` skips 69labs and uses ElevenLabs API key. `openai` uses gpt-4o-mini-tts.",
-        examples: "69labs  /  elevenlabs  /  openai",
+        desc: "Top-level routing of TTS jobs. `69labs` is the default and covers all sub-providers below. `kie` uses kie.ai's ElevenLabs gateway (same voice ids, needs KIE_API_KEY). Direct `elevenlabs` skips the gateways and uses ElevenLabs API key. `openai` uses gpt-4o-mini-tts. Tip: the one-switch AI Provider on the main Settings page sets this together with images and video.",
+        examples: "69labs  /  kie  /  elevenlabs  /  openai",
       },
       {
         key: "TTS_VOICE_PROVIDER",
@@ -134,8 +134,8 @@ const GROUPS: Group[] = [
     fields: [
       {
         key: "IMAGE_PROVIDER",
-        desc: "Which service hosts the image model. 69labs is the default — it routes to Google, OpenAI, Black Forest, etc internally with a single key.",
-        examples: "69labs  /  replicate  /  openai  /  fal",
+        desc: "Which service hosts the image model. 69labs is the default — it routes to Google, OpenAI, Black Forest, etc internally with a single key. `kie` does the same through kie.ai (needs KIE_API_KEY; model names like nano-banana-pro are translated automatically).",
+        examples: "69labs  /  kie  /  replicate  /  openai  /  fal",
       },
       {
         key: "IMAGE_MODEL",
@@ -160,8 +160,8 @@ const GROUPS: Group[] = [
     fields: [
       {
         key: "ANIMATION_PROVIDER",
-        desc: "Service for img2vid. `off` skips animation entirely. `69labs` uses Google Veo or xAI Grok. `replicate`/`fal` open the door to Kling, Luma, Runway etc.",
-        examples: "off  /  69labs  /  replicate  /  fal",
+        desc: "Service for img2vid. `off` skips animation entirely. `69labs` uses Google Veo or xAI Grok. `kie` uses kie.ai's Veo 3.1 (needs KIE_API_KEY; `veo-video` maps to veo3_fast automatically). `replicate`/`fal` open the door to Kling, Luma, Runway etc.",
+        examples: "off  /  69labs  /  kie  /  replicate  /  fal",
       },
       {
         key: "ANIMATION_MODEL",

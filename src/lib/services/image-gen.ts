@@ -5,6 +5,7 @@ import { getPrompt } from "../prompts";
 import { log } from "../logger";
 import type { Scene } from "./scene-split";
 import { createImageJob, pollJob, downloadJob, cancelJob, releaseJob } from "./labs69";
+import { createKieTask, pollKieTask, downloadKieFile, kieImageModel, kieResolution } from "./kie";
 import { MAX_CHARACTER_REFS } from "./characters";
 import { tryRealImage } from "./wiki-image";
 
@@ -93,6 +94,11 @@ export async function generateImage(
     const jobId = await labs69Image(runId, finalPrompt, filePath, refUrls);
     log(runId, "success", `Image saved: ${fileName}`, { stage: "image" });
     return { filePath, providerJobId: jobId, provider };
+  }
+  if (provider === "kie") {
+    await kieImage(runId, finalPrompt, filePath, refUrls);
+    log(runId, "success", `Image saved: ${fileName}`, { stage: "image" });
+    return { filePath, provider };
   }
   if (refUrls.length > 0) {
     log(runId, "warn", `Character references are only wired for the 69labs image provider — ignored for "${provider}"`, {
@@ -231,6 +237,63 @@ async function labs69Image(runId: string, prompt: string, outPath: string, image
 
       if (attempt < MAX_ATTEMPTS) {
         // Exponential backoff to let slots thaw
+        const delay = 5000 * attempt;
+        log(runId, "warn", `image attempt ${attempt}/${MAX_ATTEMPTS} failed: ${msg.slice(0, 200)} — retry in ${delay}ms`, {
+          stage: "image",
+        });
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+/** kie.ai image generation — same retry + moderation-soften behavior as 69labs.
+ *  Model / aspect / resolution come from the SAME settings, mapped to kie ids,
+ *  so switching providers needs no other changes. Reference images (character
+ *  consistency) pass through `image_input` (kie supports up to 8 URLs). */
+async function kieImage(runId: string, prompt: string, outPath: string, imageUrls?: string[]): Promise<void> {
+  const model = kieImageModel(getSetting("IMAGE_MODEL") || "");
+  const aspectRatio = getSetting("IMAGE_RATIO") || "16:9";
+  const resolution = kieResolution(getSetting("IMAGE_RESOLUTION") || "");
+
+  const MAX_ATTEMPTS = 3;
+  let lastErr: unknown;
+  let currentPrompt = prompt;
+  let currentImageUrls = imageUrls;
+  let softened = false;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const input: Record<string, unknown> = {
+        prompt: currentPrompt,
+        output_format: "png",
+        aspect_ratio: aspectRatio,
+      };
+      if (resolution) input.resolution = resolution;
+      if (currentImageUrls?.length) input.image_input = currentImageUrls.slice(0, 8);
+
+      const taskId = await createKieTask(model, input, { runId, stage: "image" });
+      log(runId, "debug", `kie image task ${taskId.slice(0, 12)}… (model=${model}, aspect=${aspectRatio}, attempt=${attempt})`, {
+        stage: "image",
+      });
+      const urls = await pollKieTask(taskId, runId, "image");
+      await downloadKieFile(urls[0], outPath);
+      return;
+    } catch (e) {
+      lastErr = e;
+      const msg = e instanceof Error ? e.message : String(e);
+
+      if (!softened && looksModerated(msg)) {
+        currentPrompt = softenPrompt(prompt);
+        currentImageUrls = undefined;
+        softened = true;
+        log(runId, "warn", `Image ${path.basename(outPath)} flagged by the kie.ai content filter — retrying with a softened, reference-free prompt`, {
+          stage: "image",
+        });
+      }
+
+      if (attempt < MAX_ATTEMPTS) {
         const delay = 5000 * attempt;
         log(runId, "warn", `image attempt ${attempt}/${MAX_ATTEMPTS} failed: ${msg.slice(0, 200)} — retry in ${delay}ms`, {
           stage: "image",

@@ -31,6 +31,9 @@ interface GenerationPlan {
   animationModel: string;
   voice: string;
   characters: number;
+  imageProvider?: string;
+  animationProvider?: string;
+  ttsProvider?: string;
 }
 
 function parsePlan(run: Run | null): GenerationPlan | null {
@@ -141,14 +144,14 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
               ? "none — still images only"
               : plan.clipsSource === "stock"
                 ? `${plan.clipsRatio}% of scenes — real stock footage (Pexels)`
-                : `${plan.clipsRatio}% of scenes — AI video (${plan.animationModel})`,
+                : `${plan.clipsRatio}% of scenes — AI video (${plan.animationModel}${plan.animationProvider ? ` via ${plan.animationProvider}` : ""})`,
         },
         {
           label: "Still images",
           value:
             plan.stillsSource === "stock"
               ? "real stock photos (Pexels)"
-              : `AI images (${plan.imageModel})`,
+              : `AI images (${plan.imageModel}${plan.imageProvider ? ` via ${plan.imageProvider}` : ""})`,
         },
         ...(plan.realSubjects
           ? [{ label: "Real subjects", value: "real photos from Wikipedia for named people/places" }]
@@ -156,7 +159,7 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
         {
           label: "Audio",
           value: plan.voiceover
-            ? `AI voiceover (${plan.voice})`
+            ? `AI voiceover (${plan.voice}${plan.ttsProvider ? ` via ${plan.ttsProvider}` : ""})`
             : plan.keepClipAudio
               ? "no voiceover — clips' own sound"
               : "no voiceover — silent",

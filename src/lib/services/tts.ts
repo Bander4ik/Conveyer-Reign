@@ -4,6 +4,7 @@ import { getSetting } from "../settings";
 import { log } from "../logger";
 import type { Scene } from "./scene-split";
 import { createTtsJob, pollJob, downloadJob } from "./labs69";
+import { createKieTask, pollKieTask, downloadKieFile } from "./kie";
 
 export interface TtsResult {
   /** Path to the mp3 file. */
@@ -32,6 +33,8 @@ export async function synthesizeScene(
 
   if (provider === "69labs") {
     await labs69Tts(runId, scene.text, filePath);
+  } else if (provider === "kie") {
+    await kieTts(runId, scene.text, filePath);
   } else if (provider === "elevenlabs") {
     await elevenLabs(scene.text, filePath);
   } else if (provider === "openai") {
@@ -108,6 +111,36 @@ async function labs69Tts(runId: string, text: string, outPath: string) {
   log(runId, "debug", `69labs TTS job ${jobId.slice(0, 8)}… (${voiceProvider}/${voiceId}, speed=${voiceSettings.speed ?? "default"}, pause=${autoPauseEnabled ? `${autoPauseDuration}s` : "off"})`, { stage: "tts" });
   await pollJob("tts", jobId, runId, "tts");
   await downloadJob("tts", jobId, outPath);
+}
+
+/** kie.ai TTS — ElevenLabs multilingual-v2 through kie's Jobs API. Uses the
+ *  SAME settings as 69labs voiceover (TTS_VOICE_ID = an ElevenLabs voice id,
+ *  TTS_SPEED/STABILITY/SIMILARITY/STYLE), so switching providers keeps the
+ *  voice. Edge-TTS and voice-clones don't exist on kie — those fall back to
+ *  the ElevenLabs voice id as-is with a warning. */
+async function kieTts(runId: string, text: string, outPath: string) {
+  const voiceId = getSetting("TTS_VOICE_ID") || "G17SuINrv2H9FC6nvetn";
+  const voiceProvider = (getSetting("TTS_VOICE_PROVIDER") || "elevenlabs").toLowerCase();
+  if (voiceProvider !== "elevenlabs") {
+    log(runId, "warn", `kie.ai voiceover supports ElevenLabs voices only — "${voiceProvider}" voices don't exist there. Using TTS_VOICE_ID as an ElevenLabs voice id.`, {
+      stage: "tts",
+    });
+  }
+
+  const input: Record<string, unknown> = { text, voice: voiceId };
+  const stability = parseFloatOr(getSetting("TTS_STABILITY"), NaN);
+  const similarity = parseFloatOr(getSetting("TTS_SIMILARITY_BOOST"), NaN);
+  const speed = parseFloatOr(getSetting("TTS_SPEED"), NaN);
+  const style = parseFloatOr(getSetting("TTS_STYLE"), NaN);
+  if (!Number.isNaN(stability)) input.stability = clamp(stability, 0, 1);
+  if (!Number.isNaN(similarity)) input.similarity_boost = clamp(similarity, 0, 1);
+  if (!Number.isNaN(speed)) input.speed = clamp(speed, 0.7, 1.2);
+  if (!Number.isNaN(style)) input.style = clamp(style, 0, 1);
+
+  const taskId = await createKieTask("elevenlabs/text-to-speech-multilingual-v2", input, { runId, stage: "tts" });
+  log(runId, "debug", `kie TTS task ${taskId.slice(0, 12)}… (voice=${voiceId}, speed=${input.speed ?? "default"})`, { stage: "tts" });
+  const urls = await pollKieTask(taskId, runId, "tts");
+  await downloadKieFile(urls[0], outPath);
 }
 
 function parseFloatOr(s: string, fallback: number): number {

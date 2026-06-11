@@ -156,9 +156,98 @@ export default function SettingsPage() {
       </div>
 
       {/* ─── Required API Keys group ───────────────────────────────────── */}
-      {MAIN_GROUPS.map((g) => (
-        <GroupCard key={g.title} group={g} values={values} setValues={setValues} />
-      ))}
+      <GroupCard group={MAIN_GROUPS[0]} values={values} setValues={setValues} />
+
+      {/* ─── AI Provider switch (69labs ↔ kie.ai) ──────────────────────── */}
+      {(() => {
+        const norm = (k: string, def: string) => (values[k] || def).toLowerCase();
+        const img = norm("IMAGE_PROVIDER", "69labs");
+        const anim = norm("ANIMATION_PROVIDER", "69labs");
+        const tts = norm("TTS_PROVIDER", "69labs");
+        // ANIMATION_PROVIDER "off" = video animation disabled — neutral for the
+        // backend question, so it doesn't force the switch into "mixed".
+        const animForCompare = anim === "off" ? null : anim;
+        const backend =
+          img === "kie" && tts === "kie" && (animForCompare === null || animForCompare === "kie")
+            ? "kie"
+            : img === "69labs" && tts === "69labs" && (animForCompare === null || animForCompare === "69labs")
+              ? "69labs"
+              : "mixed";
+        const setBackend = (b: string) => {
+          if (b !== "kie" && b !== "69labs") return;
+          setValues({
+            ...values,
+            IMAGE_PROVIDER: b,
+            TTS_PROVIDER: b,
+            // Don't silently re-enable animation if the user turned it off.
+            ...(anim === "off" ? {} : { ANIMATION_PROVIDER: b }),
+          });
+        };
+        return (
+          <div className="card" style={{ marginBottom: 14, borderColor: "#3a5a8a", borderWidth: 2 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <h3 style={{ fontWeight: 700, fontSize: 16 }}>AI Provider</h3>
+              <span
+                style={{
+                  background: "#1d2a3a",
+                  color: "#7cb8ff",
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: 0.5,
+                }}
+              >
+                ONE SWITCH
+              </span>
+            </div>
+            <p style={{ color: "var(--fg-muted)", fontSize: 13, marginBottom: 12, lineHeight: 1.6 }}>
+              Which service generates EVERYTHING — images, video clips (Veo), and the voiceover. One
+              switch keeps all three in sync, and your other settings (image model, voice, aspect
+              ratio…) keep working on either provider — model names are translated automatically.
+              You only need the API key of the provider you pick.
+            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+              <select
+                className="input"
+                style={{ maxWidth: 360 }}
+                value={backend === "mixed" ? "" : backend}
+                onChange={(e) => setBackend(e.target.value)}
+              >
+                {backend === "mixed" && <option value="">Mixed (set per service in Advanced)</option>}
+                <option value="69labs">69labs.vip — images + video + voice (default)</option>
+                <option value="kie">kie.ai — images + Veo video + ElevenLabs voice</option>
+              </select>
+              <span style={{ color: "var(--fg-faint)", fontSize: 11 }}>
+                Saves with <strong>Save all changes</strong>. Per-service overrides live in{" "}
+                <Link href="/settings/advanced" style={{ color: "var(--accent)" }}>Advanced</Link>.
+              </span>
+            </div>
+            <div>
+              <div style={{ marginBottom: 4 }}>
+                <label className="label" style={{ margin: 0, color: "var(--fg)", fontWeight: 600, fontSize: 12, letterSpacing: 0.3 }}>
+                  KIE_API_KEY
+                </label>
+              </div>
+              <input
+                className="input"
+                value={values.KIE_API_KEY ?? ""}
+                placeholder="e.g. Get it at kie.ai → API Keys (top-up account, pay-per-use)"
+                onChange={(e) => setValues({ ...values, KIE_API_KEY: e.target.value })}
+              />
+              <div style={{ color: "var(--fg-muted)", fontSize: 12, marginTop: 6, lineHeight: 1.5 }}>
+                Only needed when the switch above is set to kie.ai. Voiceover on kie.ai uses
+                ElevenLabs voices — your current TTS_VOICE_ID keeps working; Edge-TTS and
+                voice-clones exist only on 69labs. If video animation is turned off in Advanced, the
+                switch leaves it off.
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ─── Stock footage keys ────────────────────────────────────────── */}
+      <GroupCard group={MAIN_GROUPS[1]} values={values} setValues={setValues} />
 
       {/* ─── Google Drive Sync ─────────────────────────────────────────── */}
       <div

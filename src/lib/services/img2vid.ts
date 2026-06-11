@@ -5,6 +5,8 @@ import { getPrompt } from "../prompts";
 import { log } from "../logger";
 import type { Scene } from "./scene-split";
 import { createVideoJob, pollJob, downloadJob, cancelJob, releaseJob } from "./labs69";
+import { createKieVeoTask, pollKieVeo, downloadKieFile } from "./kie";
+import { uploadPublicImage } from "./image-host";
 
 /**
  * Turns a still image into a short ~5-second video clip.
@@ -34,6 +36,8 @@ export async function animateScene(
 
   if (provider === "69labs") {
     await labs69Img2Vid(runId, scene, options.providerJobId, options.imageProvider, filePath, options.motionStyle, options.keepAudio);
+  } else if (provider === "kie") {
+    await kieImg2Vid(runId, scene, imagePath, filePath, options.motionStyle);
   } else if (provider === "replicate") {
     await replicateImg2Vid(scene, imagePath, filePath);
   } else if (provider === "fal") {
@@ -44,6 +48,52 @@ export async function animateScene(
 
   log(runId, "success", `Animation done: ${fileName}`, { stage: "animate" });
   return filePath;
+}
+
+/** kie.ai image-to-video via Veo. kie has no jobId chaining like 69labs — it
+ *  needs a PUBLIC image URL, so the local scene image is uploaded to a temp
+ *  host (litterbox, same mechanism as character references) first. Audio note:
+ *  kie's Veo clips always come with their generated soundtrack; whether it's
+ *  kept or muted is decided later at assembly, so no flag is needed here. */
+async function kieImg2Vid(
+  runId: string,
+  scene: Scene,
+  imagePath: string,
+  outPath: string,
+  motionStyle?: string
+) {
+  const model = getSetting("ANIMATION_MODEL") || "";
+  const aspectRatio = getSetting("IMAGE_RATIO") || "16:9";
+  const durationSec = Number(getSetting("ANIMATION_DURATION") || "") || undefined;
+
+  const motion = motionStyle ?? getPrompt("animation_motion");
+  const prompt = `${scene.visual_prompt}. ${motion}`;
+
+  const imageUrl = await uploadPublicImage(imagePath);
+
+  const MAX_ATTEMPTS = 3;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const taskId = await createKieVeoTask({ prompt, imageUrl, model, aspectRatio, durationSec, runId });
+      log(runId, "debug", `kie veo task ${taskId.slice(0, 12)}… (attempt=${attempt})`, { stage: "animate" });
+      const url = await pollKieVeo(taskId, runId);
+      await downloadKieFile(url, outPath);
+      const stat = fs.statSync(outPath);
+      if (stat.size === 0) throw new Error("empty video file");
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < MAX_ATTEMPTS) {
+        const delay = 5000 * attempt;
+        log(runId, "warn", `video attempt ${attempt}/${MAX_ATTEMPTS} failed: ${(e as Error).message.slice(0, 200)} — retry in ${delay}ms`, {
+          stage: "animate",
+        });
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 async function labs69Img2Vid(

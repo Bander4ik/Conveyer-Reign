@@ -8,6 +8,7 @@ export const SETTING_KEYS = [
   // ── Required API keys ─────────────────────────────────────────────
   "GOOGLE_API_KEY",          // Gemini — scene splitting
   "LABS69_API_KEY",          // 69labs — TTS + images + img2vid (all-in-one)
+  "KIE_API_KEY",             // kie.ai — alternative all-in-one backend (images + Veo video + ElevenLabs TTS)
 
   // ── Optional / backup providers ───────────────────────────────────
   "ELEVENLABS_API_KEY",      // direct ElevenLabs (without 69labs)
@@ -149,6 +150,7 @@ export const DEFAULTS: Record<SettingKey, string> = {
   // Required API keys — empty by default, user must provide
   GOOGLE_API_KEY: "",
   LABS69_API_KEY: "",
+  KIE_API_KEY: "",
 
   // Optional providers
   ELEVENLABS_API_KEY: "",

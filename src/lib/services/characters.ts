@@ -4,6 +4,7 @@ import { getSetting } from "../settings";
 import { getPrompt } from "../prompts";
 import { log } from "../logger";
 import { createImageJob, pollJob, downloadJob, releaseJob } from "./labs69";
+import { createKieTask, pollKieTask, downloadKieFile, kieImageModel, kieResolution } from "./kie";
 import { uploadPublicImage } from "./image-host";
 
 /** Max reference images passed to the image model for a single scene. */
@@ -130,6 +131,16 @@ async function generatePortrait(
   const outPath = path.join(charDir, `${safeId(ch.id)}_ref.png`);
 
   log(runId, "info", `Generating reference portrait for "${ch.name}"`, { stage: "character" });
+  const provider = (getSetting("IMAGE_PROVIDER") || "69labs").toLowerCase();
+  if (provider === "kie") {
+    const input: Record<string, unknown> = { prompt, output_format: "png", aspect_ratio: "3:4" };
+    const res = kieResolution(resolution || "");
+    if (res) input.resolution = res;
+    const taskId = await createKieTask(kieImageModel(model || ""), input, { runId, stage: "character" });
+    const urls = await pollKieTask(taskId, runId, "character");
+    await downloadKieFile(urls[0], outPath);
+    return outPath;
+  }
   const jobId = await createImageJob({ prompt, model, aspectRatio: "3:4", resolution, runId });
   try {
     await pollJob("images", jobId, runId, "character");

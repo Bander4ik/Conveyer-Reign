@@ -129,6 +129,19 @@ export async function runPipeline(runId: string, script: string) {
     const usedVideoIds = new Set<number>();
     const usedPhotoIds = new Set<number>();
 
+    // Fail fast when the kie.ai backend is selected but its key is missing —
+    // BEFORE spending credits anywhere.
+    {
+      const usesKie = ["IMAGE_PROVIDER", "ANIMATION_PROVIDER", "TTS_PROVIDER"].some(
+        (k) => (getSetting(k as "IMAGE_PROVIDER") || "").toLowerCase() === "kie"
+      );
+      if (usesKie && !getSetting("KIE_API_KEY").trim()) {
+        throw new Error(
+          "AI provider is set to kie.ai but KIE_API_KEY is empty — add the key in Settings (get one at kie.ai → API Keys), or switch the AI provider back to 69labs."
+        );
+      }
+    }
+
     // Fail fast on a missing/invalid Pexels key BEFORE spending any TTS credits.
     if (channel.clipsSource === "stock" || channel.stillsSource === "stock") {
       try {
