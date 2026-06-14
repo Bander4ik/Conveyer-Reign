@@ -53,10 +53,25 @@ export async function GET(_: Request, ctx: { params: Promise<{ id: string }> }) 
 
   const final = take("final.mp4");
 
+  // Thumbnail options (thumbnails/thumb_N.png), sorted by their number.
+  const thumbnails: string[] = [];
+  const thumbDir = path.join(runDir, "thumbnails");
+  if (fs.existsSync(thumbDir)) {
+    for (const f of fs.readdirSync(thumbDir)) {
+      if (/^thumb_\d+\.(png|jpe?g)$/i.test(f)) thumbnails.push(`thumbnails/${f}`);
+    }
+    thumbnails.sort((a, b) => {
+      const na = Number(a.match(/_(\d+)\./)?.[1] ?? 0);
+      const nb = Number(b.match(/_(\d+)\./)?.[1] ?? 0);
+      return na - nb;
+    });
+  }
+
   return NextResponse.json({
     runDir,
     scenes: [...scenes.values()].sort((a, b) => a.index - b.index),
     finalExists: !!final,
     finalSize: final?.size ?? 0,
+    thumbnails,
   });
 }

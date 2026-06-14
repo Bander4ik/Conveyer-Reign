@@ -29,6 +29,11 @@ export interface Channel {
   battle_card: boolean;
   /** Per-channel TTS voice id. Empty = use the global TTS_VOICE_ID from Settings. */
   voice_id: string;
+  /** Auto-generate YouTube thumbnail options at the end of each run. */
+  thumbnail: boolean;
+  /** Master thumbnail prompt (style/recipe). The LLM turns it + the script +
+   *  title into a per-video thumbnail prompt. */
+  thumbnail_prompt: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -49,26 +54,30 @@ export interface ResolvedChannel {
   battleCard: boolean;
   /** Resolved TTS voice id (channel override, else global TTS_VOICE_ID). */
   voiceId: string;
+  /** Auto-generate thumbnail options for the run. */
+  thumbnail: boolean;
+  /** Master thumbnail prompt (empty = thumbnails effectively off). */
+  thumbnailPrompt: string;
 }
 
 const listStmt = db.prepare(
   `SELECT id, name, scene_split, image_prompt, animation_motion,
           clips_source, clips_ratio, stills_source, real_subjects, voiceover, keep_clip_audio,
-          battle_card, voice_id, created_at, updated_at
+          battle_card, voice_id, thumbnail, thumbnail_prompt, created_at, updated_at
    FROM channels ORDER BY name COLLATE NOCASE`
 );
 const getStmt = db.prepare(
   `SELECT id, name, scene_split, image_prompt, animation_motion,
-          clips_source, clips_ratio, stills_source, real_subjects, voiceover, keep_clip_audio, battle_card, voice_id
+          clips_source, clips_ratio, stills_source, real_subjects, voiceover, keep_clip_audio, battle_card, voice_id, thumbnail, thumbnail_prompt
    FROM channels WHERE id = ?`
 );
 const upsertStmt = db.prepare(
   `INSERT INTO channels
      (id, name, scene_split, image_prompt, animation_motion,
-      clips_source, clips_ratio, stills_source, real_subjects, voiceover, keep_clip_audio, battle_card, voice_id, updated_at)
+      clips_source, clips_ratio, stills_source, real_subjects, voiceover, keep_clip_audio, battle_card, voice_id, thumbnail, thumbnail_prompt, updated_at)
    VALUES
      (@id, @name, @scene_split, @image_prompt, @animation_motion,
-      @clips_source, @clips_ratio, @stills_source, @real_subjects, @voiceover, @keep_clip_audio, @battle_card, @voice_id, datetime('now'))
+      @clips_source, @clips_ratio, @stills_source, @real_subjects, @voiceover, @keep_clip_audio, @battle_card, @voice_id, @thumbnail, @thumbnail_prompt, datetime('now'))
    ON CONFLICT(id) DO UPDATE SET
      name = excluded.name,
      scene_split = excluded.scene_split,
@@ -82,6 +91,8 @@ const upsertStmt = db.prepare(
      keep_clip_audio = excluded.keep_clip_audio,
      battle_card = excluded.battle_card,
      voice_id = excluded.voice_id,
+     thumbnail = excluded.thumbnail,
+     thumbnail_prompt = excluded.thumbnail_prompt,
      updated_at = datetime('now')`
 );
 const deleteStmt = db.prepare("DELETE FROM channels WHERE id = ?");
@@ -117,6 +128,8 @@ interface Row {
   keep_clip_audio: unknown;
   battle_card: unknown;
   voice_id?: string;
+  thumbnail: unknown;
+  thumbnail_prompt?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -136,6 +149,8 @@ function mapRow(r: Row): Channel {
     keep_clip_audio: toBool(r.keep_clip_audio, false),
     battle_card: toBool(r.battle_card, false),
     voice_id: r.voice_id ?? "",
+    thumbnail: toBool(r.thumbnail, false),
+    thumbnail_prompt: r.thumbnail_prompt ?? "",
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
@@ -164,6 +179,8 @@ export function upsertChannel(c: {
   keep_clip_audio?: boolean | string;
   battle_card?: boolean | string;
   voice_id?: string;
+  thumbnail?: boolean | string;
+  thumbnail_prompt?: string;
 }): void {
   upsertStmt.run({
     id: c.id,
@@ -179,6 +196,8 @@ export function upsertChannel(c: {
     keep_clip_audio: toBool(c.keep_clip_audio, false) ? "1" : "0",
     battle_card: toBool(c.battle_card, false) ? "1" : "0",
     voice_id: (c.voice_id ?? "").trim(),
+    thumbnail: toBool(c.thumbnail, false) ? "1" : "0",
+    thumbnail_prompt: (c.thumbnail_prompt ?? "").trim(),
   });
 }
 
@@ -214,6 +233,8 @@ export function resolveChannel(channelId: string | null | undefined): ResolvedCh
       keepClipAudio: getSetting("ANIMATION_KEEP_VEO_AUDIO") === "1",
       battleCard: false,
       voiceId: getSetting("TTS_VOICE_ID") || "",
+      thumbnail: false,
+      thumbnailPrompt: "",
     };
   }
   return {
@@ -230,5 +251,7 @@ export function resolveChannel(channelId: string | null | undefined): ResolvedCh
     keepClipAudio: ch.keep_clip_audio,
     battleCard: ch.battle_card,
     voiceId: ch.voice_id.trim() || (getSetting("TTS_VOICE_ID") || ""),
+    thumbnail: ch.thumbnail,
+    thumbnailPrompt: ch.thumbnail_prompt,
   };
 }

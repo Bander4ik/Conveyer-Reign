@@ -61,6 +61,9 @@ export const SETTING_KEYS = [
   "OPENVERSE_TOKEN",            // optional — higher Openverse rate limits (keyless works)
   "PIXABAY_API_KEY",            // optional — enables the Pixabay source
 
+  // ── Thumbnails ────────────────────────────────────────────────────
+  "THUMBNAIL_COUNT",            // how many thumbnail options to generate per run (3-5)
+
   // ── Animations (img2vid) ──────────────────────────────────────────
   "ANIMATION_PROVIDER",      // off | 69labs | replicate | fal
   "ANIMATION_MODEL",         // e.g. veo-video, grok-imagine-video
@@ -225,6 +228,9 @@ export const DEFAULTS: Record<SettingKey, string> = {
   VISION_MATCH_MODEL: "",
   OPENVERSE_TOKEN: "",
   PIXABAY_API_KEY: "",
+
+  // Thumbnails
+  THUMBNAIL_COUNT: "4",
 
   // Animations
   ANIMATION_PROVIDER: "69labs",

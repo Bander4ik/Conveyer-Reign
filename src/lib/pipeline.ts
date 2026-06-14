@@ -18,6 +18,7 @@ import { acquireScoredFootage } from "./services/visual-source";
 import type { TtsResult } from "./services/tts";
 import { getKeyCount } from "./services/labs69";
 import { syncRunToDrive } from "./services/run-upload";
+import { generateThumbnails } from "./services/thumbnail";
 import { downloadReusedClip } from "./services/reuse";
 import { checkCancelled, clearCancelled, CancelledError } from "./cancellation";
 
@@ -26,6 +27,7 @@ const updateRun = db.prepare(
 );
 const getReuseMapStmt = db.prepare("SELECT reuse_map_json FROM runs WHERE id = ?");
 const getConfigStmt = db.prepare("SELECT config_json FROM runs WHERE id = ?");
+const getTitleStmt = db.prepare("SELECT title FROM runs WHERE id = ?");
 
 export async function runPipeline(runId: string, script: string) {
   const runDir = getRunDir(runId);
@@ -404,6 +406,26 @@ export async function runPipeline(runId: string, script: string) {
 
     // 3. Assemble final video
     const finalPath = await assembleVideo(runId, sceneAssets, runDir);
+
+    // 3b. Auto thumbnails (best-effort). The channel's master prompt + the title
+    //     + the whole script go to the LLM, which writes a per-video thumbnail
+    //     prompt; the image provider then makes THUMBNAIL_COUNT options. Never
+    //     fails the run — the video is already done.
+    if (channel.thumbnail && channel.thumbnailPrompt.trim()) {
+      try {
+        const titleRow = getTitleStmt.get(runId) as { title?: string | null } | undefined;
+        await generateThumbnails({
+          runId,
+          title: titleRow?.title ?? "",
+          script,
+          masterPrompt: channel.thumbnailPrompt,
+          runDir,
+          count: Number(getSetting("THUMBNAIL_COUNT") || "4"),
+        });
+      } catch (e) {
+        log(runId, "warn", `Thumbnails failed (non-fatal): ${(e as Error).message.slice(0, 140)}`, { stage: "thumbnail" });
+      }
+    }
 
     // 4. Drive sync (optional). Runs only when GDRIVE_SYNC_ENABLED=1 + Drive
     //    is connected. Failure here is non-fatal: local files stay intact

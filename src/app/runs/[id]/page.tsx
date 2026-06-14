@@ -57,6 +57,7 @@ interface AssetsResponse {
   scenes: SceneAsset[];
   finalExists: boolean;
   finalSize: number;
+  thumbnails?: string[];
 }
 
 // Sliding window cap on the visible log buffer. A 1 000+ scene run can
@@ -222,6 +223,31 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
             style={{ width: "100%", maxHeight: 480, borderRadius: 8, background: "#000" }}
             src={fileUrl("final.mp4")}
           />
+        </div>
+      )}
+
+      {assets?.thumbnails && assets.thumbnails.length > 0 && (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>
+            🖼 Thumbnail options{" "}
+            <span style={{ color: "var(--fg-muted)", fontWeight: 400, fontSize: 12 }}>
+              — pick the best, hover to download
+            </span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
+            {assets.thumbnails.map((t, i) => (
+              <div key={t} style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", background: "#000" }}>
+                <img src={fileUrl(t)} alt={`Thumbnail ${i + 1}`} style={{ width: "100%", display: "block", aspectRatio: "16 / 9", objectFit: "cover" }} />
+                <a
+                  className="btn-secondary"
+                  href={fileUrl(t, true)}
+                  style={{ display: "block", textAlign: "center", fontSize: 12, borderRadius: 0, borderWidth: "1px 0 0" }}
+                >
+                  ⬇ Download #{i + 1}
+                </a>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

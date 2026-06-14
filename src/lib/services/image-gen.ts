@@ -118,6 +118,29 @@ export async function generateImage(
   return { filePath, provider };
 }
 
+/**
+ * Generate ONE image from a raw prompt straight to `outPath` — no Scene, no
+ * per-scene routing. Used by the thumbnail feature. Dispatches to the same
+ * provider functions as scenes, so it inherits the 69labs/kie retry +
+ * content-moderation softening and the IMAGE_RATIO / IMAGE_MODEL settings.
+ */
+export async function generateImageToPath(runId: string, prompt: string, outPath: string): Promise<void> {
+  const provider = (getSetting("IMAGE_PROVIDER") || "69labs").toLowerCase();
+  if (provider === "69labs") {
+    await labs69Image(runId, prompt, outPath);
+  } else if (provider === "kie") {
+    await kieImage(runId, prompt, outPath);
+  } else if (provider === "replicate") {
+    await replicateImage(prompt, outPath);
+  } else if (provider === "openai") {
+    await openaiImage(prompt, outPath);
+  } else if (provider === "fal") {
+    await falImage(prompt, outPath);
+  } else {
+    throw new Error(`Unknown image provider: ${provider}`);
+  }
+}
+
 /** Does a 69labs job error look like a content-moderation rejection? */
 function looksModerated(msg: string): boolean {
   return /generation pipeline|restricted|misclassif|flagged|moderat|content policy|safety|nsfw/i.test(msg);

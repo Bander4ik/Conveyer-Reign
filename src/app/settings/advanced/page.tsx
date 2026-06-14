@@ -238,6 +238,18 @@ const GROUPS: Group[] = [
     ],
   },
   {
+    title: "Thumbnails",
+    subtitle:
+      "Auto-generated YouTube thumbnails. Turn it on per channel and write a master thumbnail prompt there; this only sets how many options each run produces. The LLM reads the whole script + title to write the per-video prompt, and the image provider generates the options.",
+    fields: [
+      {
+        key: "THUMBNAIL_COUNT",
+        desc: "How many thumbnail options to generate per run (you pick the best on the run page). More options = more image credits used.",
+        examples: "4 (default)  ·  range 1–5",
+      },
+    ],
+  },
+  {
     title: "Video Assembly (FFmpeg)",
     subtitle: "Final stitching step. Controls output resolution, framerate, and how scenes transition into each other.",
     fields: [

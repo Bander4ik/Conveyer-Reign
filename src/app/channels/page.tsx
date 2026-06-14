@@ -18,6 +18,8 @@ interface Channel {
   keep_clip_audio: boolean;
   battle_card: boolean;
   voice_id: string;
+  thumbnail: boolean;
+  thumbnail_prompt: string;
 }
 
 const HELP = {
@@ -33,6 +35,10 @@ const HELP = {
     "When voiceover is off, use each clip's own sound — the ambient audio Veo makes on AI clips, or the real audio of stock (Pexels) clips — so the video isn't silent.",
   voice:
     "The narrator voice for THIS channel. Leave empty to use the default voice from Settings. For ElevenLabs, paste a voice id from your ElevenLabs library (e.g. G17SuINrv2H9FC6nvetn).",
+  thumbnail:
+    "Auto-generate YouTube thumbnail options at the end of each run. The system reads your whole script + the video title and makes a few thumbnails in your style to choose from (shown on the run page).",
+  thumbnailPrompt:
+    "Your MASTER thumbnail recipe — the overall look for this channel's thumbnails (subject framing, lighting, mood, space for a title…). You write it once. For each video the AI turns this + the title + the full script into a specific thumbnail prompt and generates several options.",
   battle:
     "Adds an intro “VS” stat card (e.g. weight / bite force / speed) at the start. Works on top of any visual setup.",
   sceneSplit:
@@ -51,6 +57,8 @@ function blank(defaults: Pick<Channel, "scene_split" | "image_prompt" | "animati
     keep_clip_audio: false,
     battle_card: false,
     voice_id: "",
+    thumbnail: false,
+    thumbnail_prompt: "",
     scene_split: defaults.scene_split,
     image_prompt: defaults.image_prompt,
     animation_motion: defaults.animation_motion,
@@ -305,6 +313,32 @@ export default function ChannelsPage() {
                 <option value="1">On — intro VS stat card</option>
               </select>
               <p style={helpStyle}>{HELP.battle}</p>
+            </div>
+
+            {/* THUMBNAILS */}
+            <div style={{ display: "grid", gap: 12, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+              <div>
+                <label style={labelStyle}>Auto thumbnail</label>
+                <select className="input" value={e.thumbnail ? "1" : "0"} onChange={(ev) => set("thumbnail", ev.target.value === "1")}>
+                  <option value="0">Off</option>
+                  <option value="1">On — generate thumbnail options</option>
+                </select>
+                <p style={helpStyle}>{HELP.thumbnail}</p>
+              </div>
+              {e.thumbnail && (
+                <div>
+                  <label style={labelStyle}>Thumbnail master prompt</label>
+                  <p style={helpStyle}>{HELP.thumbnailPrompt}</p>
+                  <textarea
+                    className="textarea"
+                    rows={5}
+                    style={{ marginTop: 6 }}
+                    value={e.thumbnail_prompt}
+                    onChange={(ev) => set("thumbnail_prompt", ev.target.value)}
+                    placeholder="e.g. Bold close-up of the main subject, dramatic rim light, dark vignette, empty space on the left for a title, hyper-real, high contrast"
+                  />
+                </div>
+              )}
             </div>
 
             {/* PROMPTS */}

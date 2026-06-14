@@ -99,6 +99,10 @@ tryAddColumn("channels", "keep_clip_audio TEXT");
 // Channels v4 — per-channel TTS voice override. Empty/NULL = use global TTS_VOICE_ID.
 tryAddColumn("channels", "voice_id TEXT");
 
+// Channels v5 — auto-generated YouTube thumbnails (master prompt + on/off).
+tryAddColumn("channels", "thumbnail TEXT");
+tryAddColumn("channels", "thumbnail_prompt TEXT");
+
 // Migrations for older DBs. SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT
 // EXISTS`, so we attempt and ignore failure when the column already exists.
 function tryAddColumn(table: string, columnDecl: string): void {
