@@ -37,7 +37,16 @@ export async function assembleVideo(
     ffmpeg.setFfmpegPath(ffmpegPath);
     // ffprobe lives next to ffmpeg in the same bin/ folder
     const ffprobePath = ffmpegPath.replace(/ffmpeg(\.exe)?$/i, "ffprobe$1");
-    if (fs.existsSync(ffprobePath)) ffmpeg.setFfprobePath(ffprobePath);
+    if (fs.existsSync(ffprobePath)) {
+      ffmpeg.setFfprobePath(ffprobePath);
+    } else {
+      log(
+        runId,
+        "warn",
+        `ffprobe not found next to ffmpeg (${ffprobePath}) — scene durations will be ESTIMATED. Install a full ffmpeg build (with ffprobe.exe in the same bin folder) and point FFMPEG_PATH at its ffmpeg.exe for exact timing.`,
+        { stage: "assemble" }
+      );
+    }
   }
 
   const resolution = getSetting("VIDEO_RESOLUTION") || "1920x1080";
@@ -132,17 +141,48 @@ export async function assembleVideo(
   return finalPath;
 }
 
-/** Reads the exact audio duration via ffprobe. */
-export function probeDuration(filePath: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(filePath, (err, data) => {
-      if (err) return reject(err);
-      const d = data.format?.duration;
-      if (typeof d !== "number" || !isFinite(d)) {
-        // Fallback: estimate from file size
-        const stat = fs.statSync(filePath);
-        return resolve(Math.max(1, stat.size / 16000));
+/**
+ * Estimate audio duration WITHOUT ffprobe — used when ffprobe is missing or
+ * fails. Exact for our PCM WAVs (read the header's byte-rate + data size); a
+ * ~128 kbps approximation for everything else (mp3 voiceover).
+ */
+function estimateDuration(filePath: string): number {
+  try {
+    const stat = fs.statSync(filePath);
+    const fd = fs.openSync(filePath, "r");
+    try {
+      const head = Buffer.alloc(44);
+      const n = fs.readSync(fd, head, 0, 44, 0);
+      if (
+        n >= 44 &&
+        head.toString("ascii", 0, 4) === "RIFF" &&
+        head.toString("ascii", 8, 12) === "WAVE"
+      ) {
+        const byteRate = head.readUInt32LE(28); // bytes/sec
+        const dataSize = head.readUInt32LE(40); // canonical 44-byte header layout
+        if (byteRate > 0 && dataSize > 0) return Math.max(0.1, dataSize / byteRate);
       }
+    } finally {
+      fs.closeSync(fd);
+    }
+    return Math.max(1, stat.size / 16000); // ~128 kbps mp3
+  } catch {
+    return 3;
+  }
+}
+
+/**
+ * Reads the audio duration via ffprobe. If ffprobe is missing/unavailable
+ * ("Cannot find ffprobe") or returns no duration, it FALLS BACK to a size-based
+ * estimate instead of rejecting — so a missing ffprobe degrades the run (slightly
+ * off scene lengths) rather than failing every clip.
+ */
+export function probeDuration(filePath: string): Promise<number> {
+  return new Promise((resolve) => {
+    ffmpeg.ffprobe(filePath, (err, data) => {
+      if (err) return resolve(estimateDuration(filePath));
+      const d = data.format?.duration;
+      if (typeof d !== "number" || !isFinite(d)) return resolve(estimateDuration(filePath));
       resolve(d);
     });
   });
