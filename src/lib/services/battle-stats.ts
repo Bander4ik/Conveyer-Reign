@@ -1,6 +1,6 @@
 import ffmpeg from "fluent-ffmpeg";
 import fs from "node:fs";
-import { getSetting } from "../settings";
+import { getSetting, geminiModel } from "../settings";
 import { log } from "../logger";
 import { drawtextFont, escDrawtext } from "./fonts";
 import { writeSilentWav, writeSolidBmp } from "./media-synth";
@@ -40,7 +40,9 @@ function applyFfmpegPath(): void {
 export async function extractMatchup(runId: string, script: string): Promise<Matchup | null> {
   const apiKey = getSetting("GOOGLE_API_KEY");
   if (!apiKey) return null;
-  const model = getSetting("SCENE_SPLIT_MODEL") || "gemini-flash-latest";
+  // This calls the Gemini endpoint — use a Gemini model even when the channel's
+  // scene-split LLM is Claude.
+  const model = geminiModel();
 
   const system =
     "You analyze a short script for a faceless 'matchup' YouTube video (two animals, " +

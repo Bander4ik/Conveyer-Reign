@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { getSetting } from "../settings";
+import { getSetting, geminiModel } from "../settings";
 import { log } from "../logger";
 import type { Scene } from "./scene-split";
 import {
@@ -439,7 +439,9 @@ async function scoreAndPick(
   });
 
   try {
-    const model = getSetting("VISION_MATCH_MODEL") || getSetting("SCENE_SPLIT_MODEL") || "gemini-flash-latest";
+    // Gemini Vision call — must be a Gemini model (never inherit a Claude
+    // scene-split model). VISION_MATCH_MODEL overrides; else a safe Gemini id.
+    const model = getSetting("VISION_MATCH_MODEL") || geminiModel();
     const r = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
       {

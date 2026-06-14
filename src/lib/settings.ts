@@ -126,6 +126,21 @@ export function getAllSettings(): Record<string, string> {
   return out;
 }
 
+/**
+ * A Gemini model id safe to send to Google's generateContent endpoint. Several
+ * features call Gemini DIRECTLY (battle stat card, library AI-match, footage
+ * relevance scoring), so they must never receive a non-Gemini SCENE_SPLIT_MODEL
+ * — e.g. a Claude id when SCENE_SPLIT_PROVIDER=anthropic — which would 404.
+ * Claude is a text/vision model, not an image/video generator, so it only ever
+ * drives the LLM tasks (scene split); these Gemini-only calls fall back to Flash.
+ */
+export function geminiModel(): string {
+  const provider = (getSetting("SCENE_SPLIT_PROVIDER") || "google").toLowerCase();
+  const m = getSetting("SCENE_SPLIT_MODEL") || "";
+  if (provider === "anthropic" || /^claude/i.test(m)) return "gemini-flash-latest";
+  return m || "gemini-flash-latest";
+}
+
 /** Keys whose values are secrets and should be masked when sent to the UI. */
 function isSecretKey(key: string): boolean {
   return key.includes("KEY") || key.includes("TOKEN") || key.includes("SECRET");

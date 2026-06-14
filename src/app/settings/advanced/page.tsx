@@ -30,18 +30,18 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    title: "Script Breakdown (LLM)",
-    subtitle: "How your script gets divided into scenes, and which language model does the splitting.",
+    title: "Script Breakdown (LLM — the 'brain')",
+    subtitle: "The language model that reads your script and splits it into scenes. This is a TEXT model — it does NOT make images or video (those always come from the image/video providers below). Picking Claude here only changes the thinking, so it never conflicts with the visuals. `anthropic` needs ANTHROPIC_API_KEY (in Optional Providers). Note: the battle stat card + footage relevance scoring always use Gemini Vision (they need GOOGLE_API_KEY), regardless of this choice.",
     fields: [
       {
         key: "SCENE_SPLIT_PROVIDER",
-        desc: "Which LLM service splits your script into scenes. Gemini is cheap and fast. Claude is more thorough but costs more.",
+        desc: "Which LLM service splits your script into scenes (and writes per-scene visual prompts). Gemini is cheap and fast; Claude (Anthropic) is more thorough but costs more.",
         examples: "google  or  anthropic",
       },
       {
         key: "SCENE_SPLIT_MODEL",
-        desc: "Specific model id. For Google, the `-latest` alias auto-tracks the current stable Flash. For Anthropic use the full model id.",
-        examples: "gemini-flash-latest, gemini-2.5-flash, gemini-2.5-pro, claude-sonnet-4-6",
+        desc: "Specific model id. For Google, the `-latest` alias auto-tracks the current stable Flash. For Anthropic (Claude) use the full model id — `claude-sonnet-4-6` is the recommended quality option.",
+        examples: "claude-sonnet-4-6  ·  gemini-flash-latest  ·  gemini-2.5-flash  ·  gemini-2.5-pro",
       },
     ],
   },
