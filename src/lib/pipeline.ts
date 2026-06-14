@@ -294,7 +294,7 @@ export async function runPipeline(runId: string, script: string) {
 
         // Visual + (optional) voiceover in parallel.
         const audioPromise: Promise<TtsResult | null> = channel.voiceover
-          ? limitTts(() => synthesizeScene(runId, scene, audioDir))
+          ? limitTts(() => synthesizeScene(runId, scene, audioDir, channel.voiceId))
           : Promise.resolve(null);
         const [visual, ttsAudio] = await Promise.all([makeVisual(), audioPromise]);
 

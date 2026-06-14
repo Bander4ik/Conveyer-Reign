@@ -20,25 +20,28 @@ export interface TtsResult {
 export async function synthesizeScene(
   runId: string,
   scene: Scene,
-  outDir: string
+  outDir: string,
+  /** Per-channel voice override. Empty/undefined → global TTS_VOICE_ID. */
+  voiceIdOverride?: string
 ): Promise<TtsResult> {
   const provider = (getSetting("TTS_PROVIDER") || "69labs").toLowerCase();
   const fileName = `scene_${String(scene.index).padStart(3, "0")}.mp3`;
   const filePath = path.join(outDir, fileName);
+  const voiceId = (voiceIdOverride ?? "").trim() || undefined;
 
-  log(runId, "info", `TTS scene #${scene.index} (${provider})`, {
+  log(runId, "info", `TTS scene #${scene.index} (${provider}${voiceId ? `, voice ${voiceId}` : ""})`, {
     stage: "tts",
     data: { provider, text: scene.text.slice(0, 80) },
   });
 
   if (provider === "69labs") {
-    await labs69Tts(runId, scene.text, filePath);
+    await labs69Tts(runId, scene.text, filePath, voiceId);
   } else if (provider === "kie") {
-    await kieTts(runId, scene.text, filePath);
+    await kieTts(runId, scene.text, filePath, voiceId);
   } else if (provider === "elevenlabs") {
-    await elevenLabs(scene.text, filePath);
+    await elevenLabs(scene.text, filePath, voiceId);
   } else if (provider === "openai") {
-    await openaiTts(scene.text, filePath);
+    await openaiTts(scene.text, filePath, voiceId);
   } else {
     throw new Error(`Unknown TTS provider: ${provider}`);
   }
@@ -54,8 +57,8 @@ export async function synthesizeScene(
   return { filePath, durationSec };
 }
 
-async function labs69Tts(runId: string, text: string, outPath: string) {
-  const voiceId = getSetting("TTS_VOICE_ID") || "en-US-GuyNeural";
+async function labs69Tts(runId: string, text: string, outPath: string, voiceOverride?: string) {
+  const voiceId = voiceOverride || getSetting("TTS_VOICE_ID") || "en-US-GuyNeural";
   const voiceProviderRaw = (getSetting("TTS_VOICE_PROVIDER") || "edgetts").toLowerCase();
   const voiceProvider =
     voiceProviderRaw === "elevenlabs" || voiceProviderRaw === "edgetts" || voiceProviderRaw === "voice-clone"
@@ -118,8 +121,8 @@ async function labs69Tts(runId: string, text: string, outPath: string) {
  *  TTS_SPEED/STABILITY/SIMILARITY/STYLE), so switching providers keeps the
  *  voice. Edge-TTS and voice-clones don't exist on kie — those fall back to
  *  the ElevenLabs voice id as-is with a warning. */
-async function kieTts(runId: string, text: string, outPath: string) {
-  const voiceId = getSetting("TTS_VOICE_ID") || "G17SuINrv2H9FC6nvetn";
+async function kieTts(runId: string, text: string, outPath: string, voiceOverride?: string) {
+  const voiceId = voiceOverride || getSetting("TTS_VOICE_ID") || "G17SuINrv2H9FC6nvetn";
   const voiceProvider = (getSetting("TTS_VOICE_PROVIDER") || "elevenlabs").toLowerCase();
   if (voiceProvider !== "elevenlabs") {
     log(runId, "warn", `kie.ai voiceover supports ElevenLabs voices only — "${voiceProvider}" voices don't exist there. Using TTS_VOICE_ID as an ElevenLabs voice id.`, {
@@ -151,10 +154,10 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
-async function elevenLabs(text: string, outPath: string) {
+async function elevenLabs(text: string, outPath: string, voiceOverride?: string) {
   const apiKey = getSetting("ELEVENLABS_API_KEY");
   if (!apiKey) throw new Error("ELEVENLABS_API_KEY is not set");
-  const voiceId = getSetting("TTS_VOICE_ID") || "21m00Tcm4TlvDq8ikWAM";
+  const voiceId = voiceOverride || getSetting("TTS_VOICE_ID") || "21m00Tcm4TlvDq8ikWAM";
   const model = getSetting("TTS_MODEL") || "eleven_multilingual_v2";
 
   const resp = await fetch(
@@ -177,11 +180,11 @@ async function elevenLabs(text: string, outPath: string) {
   fs.writeFileSync(outPath, buf);
 }
 
-async function openaiTts(text: string, outPath: string) {
+async function openaiTts(text: string, outPath: string, voiceOverride?: string) {
   const apiKey = getSetting("OPENAI_API_KEY");
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
   const model = getSetting("TTS_MODEL") || "gpt-4o-mini-tts";
-  const voice = getSetting("TTS_VOICE_ID") || "alloy";
+  const voice = voiceOverride || getSetting("TTS_VOICE_ID") || "alloy";
 
   const resp = await fetch("https://api.openai.com/v1/audio/speech", {
     method: "POST",

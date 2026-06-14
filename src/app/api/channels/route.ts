@@ -23,6 +23,7 @@ export async function POST(req: Request) {
     voiceover?: boolean | string;
     keep_clip_audio?: boolean | string;
     battle_card?: boolean | string;
+    voice_id?: string;
   };
   const id = body.id?.trim() || randomUUID();
   upsertChannel({ ...body, id, name: body.name ?? "" });

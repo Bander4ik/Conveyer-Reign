@@ -17,6 +17,7 @@ interface Channel {
   voiceover: boolean;
   keep_clip_audio: boolean;
   battle_card: boolean;
+  voice_id: string;
 }
 
 const HELP = {
@@ -30,6 +31,8 @@ const HELP = {
     "Whether an AI narrator reads your script. Off = no narration — the video uses the clips' own sound if 'Keep clip sounds' is on below, otherwise it plays silent.",
   keepClipAudio:
     "When voiceover is off, use each clip's own sound — the ambient audio Veo makes on AI clips, or the real audio of stock (Pexels) clips — so the video isn't silent.",
+  voice:
+    "The narrator voice for THIS channel. Leave empty to use the default voice from Settings. For ElevenLabs, paste a voice id from your ElevenLabs library (e.g. G17SuINrv2H9FC6nvetn).",
   battle:
     "Adds an intro “VS” stat card (e.g. weight / bite force / speed) at the start. Works on top of any visual setup.",
   sceneSplit:
@@ -47,6 +50,7 @@ function blank(defaults: Pick<Channel, "scene_split" | "image_prompt" | "animati
     voiceover: true,
     keep_clip_audio: false,
     battle_card: false,
+    voice_id: "",
     scene_split: defaults.scene_split,
     image_prompt: defaults.image_prompt,
     animation_motion: defaults.animation_motion,
@@ -77,6 +81,7 @@ export default function ChannelsPage() {
   const [defaults, setDefaults] = useState({ scene_split: "", image_prompt: "", animation_motion: "" });
   const [editing, setEditing] = useState<Channel | null>(null);
   const [saved, setSaved] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   async function load() {
     const [chRes, prRes] = await Promise.all([fetch("/api/channels"), fetch("/api/prompts")]);
@@ -226,15 +231,6 @@ export default function ChannelsPage() {
                 </select>
                 <p style={helpStyle}>{HELP.stills}</p>
               </div>
-
-              <div>
-                <label style={labelStyle}>Real photos of real subjects (Wikipedia)</label>
-                <select className="input" value={e.real_subjects ? "1" : "0"} onChange={(ev) => set("real_subjects", ev.target.value === "1")}>
-                  <option value="1">On</option>
-                  <option value="0">Off</option>
-                </select>
-                <p style={helpStyle}>{HELP.real}</p>
-              </div>
             </div>
 
             {/* AUDIO */}
@@ -251,14 +247,55 @@ export default function ChannelsPage() {
                 <p style={helpStyle}>{HELP.voiceover}</p>
               </div>
               <div>
-                <label style={labelStyle}>Keep AI clip sounds</label>
-                <select className="input" value={e.keep_clip_audio ? "1" : "0"} onChange={(ev) => set("keep_clip_audio", ev.target.value === "1")}>
-                  <option value="0">Off</option>
-                  <option value="1">On</option>
-                </select>
-                <p style={helpStyle}>{HELP.keepClipAudio}</p>
+                <label style={labelStyle}>
+                  Voice{" "}
+                  {!e.voiceover && (
+                    <span style={{ color: "var(--fg-faint)", fontWeight: 400 }}>(applies when voiceover is on)</span>
+                  )}
+                </label>
+                <input
+                  className="input"
+                  value={e.voice_id}
+                  placeholder="Leave empty = default voice from Settings"
+                  onChange={(ev) => set("voice_id", ev.target.value)}
+                />
+                <p style={helpStyle}>{HELP.voice}</p>
               </div>
             </div>
+
+            {/* Advanced settings — collapsed by default so the editor stays simple */}
+            <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setShowAdvanced((s) => !s)}
+                style={{ fontSize: 13 }}
+              >
+                {showAdvanced
+                  ? "▾ Hide advanced settings"
+                  : "▸ Show more settings — real subjects, clip audio, stat card, prompts"}
+              </button>
+            </div>
+
+            {showAdvanced && (
+              <>
+                <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+                  <label style={labelStyle}>Real photos of real subjects (Wikipedia)</label>
+                  <select className="input" value={e.real_subjects ? "1" : "0"} onChange={(ev) => set("real_subjects", ev.target.value === "1")}>
+                    <option value="1">On</option>
+                    <option value="0">Off</option>
+                  </select>
+                  <p style={helpStyle}>{HELP.real}</p>
+                </div>
+
+                <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+                  <label style={labelStyle}>Keep AI clip sounds</label>
+                  <select className="input" value={e.keep_clip_audio ? "1" : "0"} onChange={(ev) => set("keep_clip_audio", ev.target.value === "1")}>
+                    <option value="0">Off</option>
+                    <option value="1">On</option>
+                  </select>
+                  <p style={helpStyle}>{HELP.keepClipAudio}</p>
+                </div>
 
             {/* OVERLAY */}
             <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
@@ -291,6 +328,8 @@ export default function ChannelsPage() {
                 <textarea className="textarea" rows={3} style={{ marginTop: 6 }} value={e.animation_motion} onChange={(ev) => set("animation_motion", ev.target.value)} />
               </div>
             </div>
+              </>
+            )}
 
             <div style={{ display: "flex", gap: 8 }}>
               <button className="btn" onClick={save}>

@@ -115,7 +115,7 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
             limitTts(async () => {
               try {
                 if (channel.voiceover) {
-                  await synthesizeScene(id, s, audioDir);
+                  await synthesizeScene(id, s, audioDir, channel.voiceId);
                 } else {
                   // No voiceover: reuse the clip's own audio (or silence) — never TTS.
                   const clip = existingClip(s.index);

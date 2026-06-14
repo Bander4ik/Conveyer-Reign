@@ -116,7 +116,7 @@ export async function POST(req: Request) {
     battleCard: ch.battleCard,
     imageModel: getSetting("IMAGE_MODEL") || "nano-banana-pro",
     animationModel: getSetting("ANIMATION_MODEL") || "veo-video",
-    voice: `${getSetting("TTS_VOICE_PROVIDER") || "elevenlabs"} · ${getSetting("TTS_VOICE_ID") || "default"}`,
+    voice: `${getSetting("TTS_VOICE_PROVIDER") || "elevenlabs"} · ${ch.voiceId || getSetting("TTS_VOICE_ID") || "default"}`,
     characters: cast.length,
     imageProvider: (getSetting("IMAGE_PROVIDER") || "69labs").toLowerCase(),
     animationProvider: (getSetting("ANIMATION_PROVIDER") || "69labs").toLowerCase(),
