@@ -13,7 +13,8 @@ import { generateImage } from "./services/image-gen";
 import { animateScene, pickScenesToAnimate } from "./services/img2vid";
 import { extractMatchup, renderStatCard, makeSilentAudio, CARD_DURATION_SEC } from "./services/battle-stats";
 import { assembleVideo, extractOrSilentAudio, type AssembleInput } from "./services/video-assemble";
-import { acquireStockClipForScene, acquireStockPhotoForScene, pexelsPreflight, type Orientation } from "./services/stock-footage";
+import { pexelsPreflight } from "./services/stock-footage";
+import { acquireScoredFootage } from "./services/visual-source";
 import type { TtsResult } from "./services/tts";
 import { getKeyCount } from "./services/labs69";
 import { syncRunToDrive } from "./services/run-upload";
@@ -120,14 +121,15 @@ export async function runPipeline(runId: string, script: string) {
         ? pickScenesToAnimate(scenes, channel.clipsRatio, distribution)
         : new Set<number>();
 
-    // Stock (Pexels) options + per-run dedup sets (video & photo libraries differ).
-    const stockOrientationRaw = (getSetting("STOCK_FOOTAGE_ORIENTATION") || "landscape").toLowerCase();
-    const stockOrientation: Orientation =
-      stockOrientationRaw === "portrait" || stockOrientationRaw === "square" ? stockOrientationRaw : "landscape";
-    const stockMaxHeight = Math.max(360, Number(getSetting("STOCK_FOOTAGE_MAX_HEIGHT") || "1080"));
-    const stockMinDuration = Math.max(1, Number(getSetting("STOCK_FOOTAGE_MIN_DURATION") || "4"));
-    const usedVideoIds = new Set<number>();
-    const usedPhotoIds = new Set<number>();
+    // Real-footage relevance system (multi-source search + Gemini Vision scoring).
+    // One run-wide dedup set of namespaced ids ("pexels:123", "wikimedia:Foo"…).
+    const usedFootageIds = new Set<string>();
+    const footageDurSec = Math.max(
+      Number(getSetting("STOCK_FOOTAGE_MIN_DURATION") || "4"),
+      Number(getSetting("SCENE_DURATION_SECONDS") || "5")
+    );
+    // One-line topic of the whole video — anchors relevance scoring to context.
+    const videoContext = script.replace(/\s+/g, " ").trim().slice(0, 400);
 
     // Fail fast when the kie.ai backend is selected but its key is missing —
     // BEFORE spending credits anywhere.
@@ -142,12 +144,17 @@ export async function runPipeline(runId: string, script: string) {
       }
     }
 
-    // Fail fast on a missing/invalid Pexels key BEFORE spending any TTS credits.
+    // Fail fast on a missing/invalid Pexels key BEFORE spending any TTS credits —
+    // but only when a real-footage channel actually uses Pexels. The keyless
+    // sources (Openverse / Wikimedia / Internet Archive) need no key.
     if (channel.clipsSource === "stock" || channel.stillsSource === "stock") {
-      try {
-        await pexelsPreflight(runId);
-      } catch (err) {
-        throw new Error(`Stock footage needs a valid Pexels API key — ${(err as Error).message}`);
+      const sources = (getSetting("FOOTAGE_SOURCES") || "pexels,openverse,wikimedia,archive").toLowerCase();
+      if (sources.includes("pexels")) {
+        try {
+          await pexelsPreflight(runId);
+        } catch (err) {
+          throw new Error(`Real footage with Pexels needs a valid Pexels API key — ${(err as Error).message}`);
+        }
       }
     }
 
@@ -213,29 +220,26 @@ export async function runPipeline(runId: string, script: string) {
                 log(runId, "warn", `reuse #${scene.index} failed: ${(e as Error).message}`, { stage: "reuse" });
               }
             }
-            // Real stock video clip (fall back to an AI image if none is found).
+            // Real footage: search every source + Gemini Vision picks the clip
+            // that best matches the scene; AI fallback if none clears the bar.
             if (channel.clipsSource === "stock") {
               const v = path.join(animDir, `scene_${pad}.mp4`);
-              try {
-                await limitAnim(() =>
-                  acquireStockClipForScene(scene, v, {
-                    runId,
-                    orientation: stockOrientation,
-                    maxHeight: stockMaxHeight,
-                    minDuration: stockMinDuration,
-                    usedIds: usedVideoIds,
-                  })
-                );
-                return { imagePath: v, videoPath: v, provider: "stock" };
-              } catch (e) {
-                log(runId, "warn", `Stock clip #${scene.index} unavailable, using AI image: ${(e as Error).message.slice(0, 140)}`, {
-                  stage: "animate",
-                });
-                const img = await limitImg(() =>
-                  generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects)
-                );
-                return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
-              }
+              const found = await limitAnim(() =>
+                acquireScoredFootage(scene, v, usedFootageIds, {
+                  runId,
+                  want: "video",
+                  durSec: footageDurSec,
+                  videoContext,
+                })
+              );
+              if (found) return { imagePath: v, videoPath: v, provider: found.provider };
+              log(runId, "warn", `No relevant real clip for #${scene.index} — using AI image instead`, {
+                stage: "animate",
+              });
+              const img = await limitImg(() =>
+                generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects)
+              );
+              return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
             }
             // AI clip: AI image → Veo (Ken-Burns fallback on failure).
             const img = await limitImg(() =>
@@ -263,28 +267,25 @@ export async function runPipeline(runId: string, script: string) {
             return { imagePath: img.filePath, videoPath, jobId: img.providerJobId, provider: img.provider };
           }
 
-          // Still scene.
+          // Still scene from real footage: search every source + Gemini Vision
+          // picks the photo that best matches the scene; AI fallback otherwise.
           if (channel.stillsSource === "stock") {
             const p = path.join(imgDir, `scene_${pad}.jpg`);
-            try {
-              await limitImg(() =>
-                acquireStockPhotoForScene(scene, p, {
-                  runId,
-                  orientation: stockOrientation,
-                  maxHeight: stockMaxHeight,
-                  usedIds: usedPhotoIds,
-                })
-              );
-              return { imagePath: p, videoPath: null, provider: "stock" };
-            } catch (e) {
-              log(runId, "warn", `Stock photo #${scene.index} unavailable, using AI image: ${(e as Error).message.slice(0, 140)}`, {
-                stage: "image",
-              });
-              const img = await limitImg(() =>
-                generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects)
-              );
-              return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
-            }
+            const found = await limitImg(() =>
+              acquireScoredFootage(scene, p, usedFootageIds, {
+                runId,
+                want: "image",
+                videoContext,
+              })
+            );
+            if (found) return { imagePath: p, videoPath: null, provider: found.provider };
+            log(runId, "warn", `No relevant real photo for #${scene.index} — using AI image instead`, {
+              stage: "image",
+            });
+            const img = await limitImg(() =>
+              generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects)
+            );
+            return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
           }
           const img = await limitImg(() =>
             generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects)

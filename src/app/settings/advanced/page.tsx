@@ -191,23 +191,48 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    title: "Stock Footage (Pexels)",
+    title: "Real Footage (multi-source + relevance scoring)",
     subtitle:
-      "Quality controls for REAL stock clips and photos — used only by channels whose Moving clips / Still images are set to \"Real stock footage\". The Pexels API key itself lives on the main Settings page.",
+      "Used only by channels whose Moving clips / Still images are set to \"Real stock footage\". The app searches several sources, then Gemini Vision LOOKS at each candidate and scores how well it fits the scene — only a clip above the threshold is used, otherwise it generates with AI. Pexels needs its key (main Settings); Openverse / Wikimedia / Internet Archive are keyless.",
     fields: [
       {
+        key: "FOOTAGE_SOURCES",
+        desc: "Which sources to search, comma-separated. `pexels` (needs key), `openverse` / `wikimedia` / `archive` (keyless), `pixabay` (needs a free Pixabay key). More sources = more candidates for Gemini to choose the best from. Video sources: pexels, pixabay, archive. Photo sources: pexels, pixabay, openverse, wikimedia.",
+        examples: "pexels,openverse,wikimedia,archive (default)  ·  pexels  ·  pexels,pixabay,openverse,wikimedia,archive",
+      },
+      {
+        key: "REAL_MATCH_THRESHOLD",
+        desc: "How relevant a found clip/photo must be (0-100, judged by Gemini Vision) before it's used. Higher = stricter (fewer but more on-point real clips, more AI fallback); lower = more real footage but looser matches. Set 0 to skip scoring and take the first result. Default 85.",
+        examples: "85 (default)  ·  90 stricter  ·  75 looser  ·  0 = no scoring",
+      },
+      {
+        key: "VISION_MATCH_MODEL",
+        desc: "Gemini model used to score footage relevance. Leave empty to reuse your Script-Breakdown model. A Flash model is fast and cheap and works well here.",
+        examples: "(empty = scene-split model)  ·  gemini-flash-latest  ·  gemini-2.5-flash",
+      },
+      {
+        key: "PIXABAY_API_KEY",
+        desc: "Optional. Enables the Pixabay source (free key at pixabay.com/api/docs). Only used if `pixabay` is listed in FOOTAGE_SOURCES above.",
+        examples: "Leave empty unless you added pixabay to FOOTAGE_SOURCES",
+      },
+      {
+        key: "OPENVERSE_TOKEN",
+        desc: "Optional. Openverse works with NO token, but a free token (api.openverse.org) raises the rate limit if you hit it on long videos.",
+        examples: "Leave empty for anonymous access (works fine)",
+      },
+      {
         key: "STOCK_FOOTAGE_ORIENTATION",
-        desc: "Which shape of footage to search for on Pexels. Use `landscape` for normal 16:9 YouTube videos, `portrait` for Shorts / TikTok-style 9:16, `square` for 1:1.",
+        desc: "Which shape of footage to search for. Use `landscape` for normal 16:9 YouTube videos, `portrait` for Shorts / TikTok-style 9:16, `square` for 1:1.",
         examples: "landscape (default)  ·  portrait  ·  square",
       },
       {
         key: "STOCK_FOOTAGE_MAX_HEIGHT",
-        desc: "Maximum video height (in pixels) to download. 1080 keeps downloads fast and matches a Full-HD final video. Raise to 2160 only if you render in 4K — files get much larger and slower.",
+        desc: "Maximum video/photo height (in pixels) to download. 1080 keeps downloads fast and matches a Full-HD final video. Raise to 2160 only if you render in 4K — files get much larger and slower.",
         examples: "1080 (default)  ·  720 for faster tests  ·  2160 for 4K",
       },
       {
         key: "STOCK_FOOTAGE_MIN_DURATION",
-        desc: "Shortest stock clip (in seconds) the search will accept. Filters out 1-2 second micro-clips that would look choppy. Don't set it higher than your typical scene length or fewer clips will match.",
+        desc: "Shortest video clip (in seconds) the search will accept. Filters out 1-2 second micro-clips that would look choppy. Don't set it higher than your typical scene length or fewer clips will match.",
         examples: "4 (default)  ·  range 1–10",
       },
     ],

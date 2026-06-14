@@ -22,9 +22,9 @@ interface Channel {
 
 const HELP = {
   clips:
-    "Whether scenes move (video) or stay still images, and whether the moving clips are AI-generated (Veo) or real found footage (Pexels).",
+    "Whether scenes move (video) or stay still images, and whether the moving clips are AI-generated (Veo) or REAL footage from the web (Pexels / Internet Archive…) where Gemini Vision picks the clip that best matches each scene.",
   ratio: "How many scenes become moving clips — the rest are still images.",
-  stills: "How the still scenes look — AI-generated (nano-banana) or real stock photos (Pexels).",
+  stills: "How the still scenes look — AI-generated (nano-banana) or REAL photos from the web (Pexels / Openverse / Wikimedia) where Gemini Vision picks the best match per scene.",
   real:
     "When your script names a real planet / scientist / place, pull an ACTUAL photo of it from Wikipedia (overrides the choices above for those scenes).",
   voiceover:
@@ -202,7 +202,7 @@ export default function ChannelsPage() {
                 <select className="input" value={e.clips_source} onChange={(ev) => set("clips_source", ev.target.value as ClipsSource)}>
                   <option value="none">None — still images only</option>
                   <option value="ai">AI-generated (Veo)</option>
-                  <option value="stock">Real stock footage (Pexels)</option>
+                  <option value="stock">Real footage (web · best match)</option>
                 </select>
                 <p style={helpStyle}>{HELP.clips}</p>
               </div>
@@ -227,7 +227,7 @@ export default function ChannelsPage() {
                 <label style={labelStyle}>Still images</label>
                 <select className="input" value={e.stills_source} onChange={(ev) => set("stills_source", ev.target.value as StillsSource)}>
                   <option value="ai">AI-generated (nano-banana)</option>
-                  <option value="stock">Real stock photos (Pexels)</option>
+                  <option value="stock">Real photos (web · best match)</option>
                 </select>
                 <p style={helpStyle}>{HELP.stills}</p>
               </div>

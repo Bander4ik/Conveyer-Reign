@@ -51,10 +51,15 @@ export const SETTING_KEYS = [
   "IMAGE_RATIO",             // e.g. 16:9, 9:16, 1:1
   "IMAGE_RESOLUTION",        // 1k | 2k | 4k (for models that support it)
 
-  // ── Stock footage (Pexels) ────────────────────────────────────────
+  // ── Real footage (multi-source + Gemini Vision relevance scoring) ──
   "STOCK_FOOTAGE_ORIENTATION",  // landscape | portrait | square
   "STOCK_FOOTAGE_MAX_HEIGHT",   // max px height to download (e.g. 1080)
   "STOCK_FOOTAGE_MIN_DURATION", // min stock clip length in seconds
+  "FOOTAGE_SOURCES",            // CSV: pexels,openverse,wikimedia,archive,pixabay
+  "REAL_MATCH_THRESHOLD",       // 0-100 — Gemini Vision relevance bar (default 85)
+  "VISION_MATCH_MODEL",         // Gemini model for relevance scoring (blank = scene-split model)
+  "OPENVERSE_TOKEN",            // optional — higher Openverse rate limits (keyless works)
+  "PIXABAY_API_KEY",            // optional — enables the Pixabay source
 
   // ── Animations (img2vid) ──────────────────────────────────────────
   "ANIMATION_PROVIDER",      // off | 69labs | replicate | fal
@@ -196,10 +201,15 @@ export const DEFAULTS: Record<SettingKey, string> = {
   IMAGE_RATIO: "16:9",
   IMAGE_RESOLUTION: "1k",
 
-  // Stock footage (Pexels)
+  // Real footage (multi-source + Gemini Vision relevance scoring)
   STOCK_FOOTAGE_ORIENTATION: "landscape",
   STOCK_FOOTAGE_MAX_HEIGHT: "1080",
   STOCK_FOOTAGE_MIN_DURATION: "4",
+  FOOTAGE_SOURCES: "pexels,openverse,wikimedia,archive",
+  REAL_MATCH_THRESHOLD: "85",
+  VISION_MATCH_MODEL: "",
+  OPENVERSE_TOKEN: "",
+  PIXABAY_API_KEY: "",
 
   // Animations
   ANIMATION_PROVIDER: "69labs",
