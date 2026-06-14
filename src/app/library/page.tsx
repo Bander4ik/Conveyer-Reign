@@ -35,6 +35,23 @@ interface GdriveStatus {
   credentialsConfigured: boolean;
 }
 
+/** Fetch + parse JSON without ever surfacing a raw "JSON.parse: unexpected
+ *  character…" — a non-JSON body (HTML error page, 404, proxy) becomes a clean
+ *  message instead. */
+async function getJson<T>(url: string): Promise<T> {
+  const res = await fetch(url);
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(
+      res.ok
+        ? "The server returned an unexpected response (not JSON)."
+        : `Request failed (HTTP ${res.status}). The library service may be unavailable.`
+    );
+  }
+}
+
 export default function LibraryPage() {
   const [runs, setRuns] = useState<LibraryRun[] | null>(null);
   const [drive, setDrive] = useState<GdriveStatus | null>(null);
@@ -48,14 +65,14 @@ export default function LibraryPage() {
     (async () => {
       setLoading(true);
       try {
-        const driveR = await fetch("/api/gdrive/status").then((r) => r.json());
+        const driveR = await getJson<GdriveStatus>("/api/gdrive/status");
         if (!alive) return;
-        setDrive(driveR as GdriveStatus);
+        setDrive(driveR);
         if (!driveR.connected) {
           setRuns([]);
           return;
         }
-        const r = await fetch("/api/library/runs").then((r) => r.json());
+        const r = await getJson<{ error?: string; runs?: LibraryRun[] }>("/api/library/runs");
         if (!alive) return;
         if (r.error) {
           setError(String(r.error));
