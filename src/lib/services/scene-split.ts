@@ -85,7 +85,7 @@ Only use "real_image"/"person_overlay" when a real photo genuinely exists and fi
  * Why sentence boundaries: the LLM never sees a half-sentence at the seam,
  * so coverage stays clean and no scene is born torn-in-two.
  */
-const WORDS_PER_CHUNK = 3000;
+const WORDS_PER_CHUNK = 2500;
 
 /**
  * Splits the script into scenes. Supports Google Gemini (default, cheap) and
@@ -363,9 +363,52 @@ async function splitWithClaude(systemPrompt: string, script: string): Promise<st
     .join("\n");
 }
 
-/** Extracts the first JSON array from a text response, even if the model added markdown. */
+/**
+ * Salvage every top-level {…} object out of an array's text, parsing each on its
+ * own. A single malformed scene (stray control char, bad escape, truncated tail)
+ * then drops just that one scene instead of failing the whole run. String-aware
+ * brace matching so braces inside text/visual_prompt don't confuse it.
+ */
+function salvageObjects(text: string): unknown[] {
+  const objs: unknown[] = [];
+  let depth = 0;
+  let start = -1;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (c === "}") {
+      if (depth > 0) {
+        depth--;
+        if (depth === 0 && start >= 0) {
+          try {
+            objs.push(JSON.parse(text.slice(start, i + 1)));
+          } catch {
+            // skip this malformed object, keep going
+          }
+          start = -1;
+        }
+      }
+    }
+  }
+  return objs;
+}
+
+/** Extracts the JSON array from a model response, tolerant of markdown fences,
+ *  trailing prose, and a single malformed/truncated scene. */
 function extractJson(text: string): unknown {
-  const trimmed = text.trim();
+  // Strip ```json … ``` fences if present.
+  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   try {
     return JSON.parse(trimmed);
   } catch {
@@ -375,6 +418,9 @@ function extractJson(text: string): unknown {
         return JSON.parse(match[0]);
       } catch {}
     }
+    // Per-object salvage — recover the scenes that DID parse rather than crash.
+    const salvaged = salvageObjects(match ? match[0] : trimmed);
+    if (salvaged.length > 0) return salvaged;
     throw new Error("Could not parse JSON from model response");
   }
 }
