@@ -156,7 +156,9 @@ async function labs69Img2Vid(
       lastErr = e;
       const msg = e instanceof Error ? e.message : String(e);
       if (lastJobId) {
-        if (/polling timeout/i.test(msg)) {
+        // Match pollJob's ACTUAL stall/timeout messages so a stuck Veo job gets
+        // cancelled (freeing the remote slot) instead of just locally released.
+        if (/stalled|hard cap|timed out|timeout/i.test(msg)) {
           const cancelled = await cancelJob("videos", lastJobId);
           log(runId, "debug", `Cancelled video ${lastJobId.slice(0, 8)} → ${cancelled ? "ok" : "skipped"}`, {
             stage: "animate",

@@ -27,7 +27,7 @@ export const SETTING_KEYS = [
   "SCENE_SPLIT_MODEL",       // e.g. gemini-flash-latest, claude-sonnet-4-6
 
   // ── Text-to-Speech ────────────────────────────────────────────────
-  "TTS_PROVIDER",            // 69labs | elevenlabs | openai
+  "TTS_PROVIDER",            // 69labs | kie | elevenlabs | openai
   "TTS_VOICE_PROVIDER",      // For 69labs: edgetts | elevenlabs | voice-clone
   "TTS_VOICE_ID",            // Voice id (ElevenLabs / Edge / clone UUID)
   "TTS_MODEL",               // e.g. eleven_multilingual_v2
@@ -46,7 +46,7 @@ export const SETTING_KEYS = [
   "TTS_PAUSE_FREQUENCY",     // 1–100
 
   // ── Images ────────────────────────────────────────────────────────
-  "IMAGE_PROVIDER",          // 69labs | replicate | openai | fal
+  "IMAGE_PROVIDER",          // 69labs | kie | replicate | openai | fal
   "IMAGE_MODEL",             // e.g. nano-banana-pro, imagen-4, seedream-4.5
   "IMAGE_RATIO",             // e.g. 16:9, 9:16, 1:1
   "IMAGE_RESOLUTION",        // 1k | 2k | 4k (for models that support it)
@@ -65,7 +65,7 @@ export const SETTING_KEYS = [
   "THUMBNAIL_COUNT",            // how many thumbnail options to generate per run (3-5)
 
   // ── Animations (img2vid) ──────────────────────────────────────────
-  "ANIMATION_PROVIDER",      // off | 69labs | replicate | fal
+  "ANIMATION_PROVIDER",      // off | 69labs | kie | replicate | fal
   "ANIMATION_MODEL",         // e.g. veo-video, grok-imagine-video
   "ANIMATION_RATIO_PERCENT", // 0–100, percentage of scenes to animate
   "ANIMATION_DISTRIBUTION",  // first-half | alternating | random | all

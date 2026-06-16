@@ -151,9 +151,15 @@ export async function generateImageToPath(runId: string, prompt: string, outPath
   }
 }
 
-/** Does a 69labs job error look like a content-moderation rejection? */
+/** Does an image-job error look like a content-moderation rejection?
+ *  Covers BOTH 69labs wording ("generation pipeline", "restricted", "flagged")
+ *  AND kie/Gemini wording ("blocked", "prohibited", "violates usage policy",
+ *  "IMAGE_SAFETY", "sensitive") — otherwise the soften-and-retry rescue silently
+ *  never fires on kie for Reign's predator prompts. */
 function looksModerated(msg: string): boolean {
-  return /generation pipeline|restricted|misclassif|flagged|moderat|content policy|safety|nsfw/i.test(msg);
+  return /generation pipeline|restricted|misclassif|flagged|moderat|content policy|safety|nsfw|blocked|prohibit|violat|usage polic|sensitive|not allowed|image_safety|explicit|sexual/i.test(
+    msg
+  );
 }
 
 /** 69labs (and most image models) reject "violent" wording even for tasteful
@@ -204,6 +210,18 @@ async function labs69Image(runId: string, prompt: string, outPath: string, image
     aspectRatio = map[aspectRatio] ?? aspectRatio;
   }
 
+  // Imagen ignores reference images — so character consistency AND scene
+  // continuity silently do nothing on it. Warn once so a user who switched
+  // IMAGE_MODEL to imagen (or cleared it) knows why the look isn't sticking.
+  if (isImagen && imageUrls?.length) {
+    log(
+      runId,
+      "warn",
+      `IMAGE_MODEL "${model ?? "imagen (server default)"}" ignores reference images — character consistency & scene continuity won't apply. Use nano-banana-pro for those.`,
+      { stage: "image" }
+    );
+  }
+
   const resolution = getSetting("IMAGE_RESOLUTION") || undefined;
 
   // Retry: on timeout we cancel the stuck job first to free the concurrent slot.
@@ -240,12 +258,14 @@ async function labs69Image(runId: string, prompt: string, outPath: string, image
       lastErr = e;
       const msg = e instanceof Error ? e.message : String(e);
 
-      // On polling timeout — cancel the orphaned job to free its concurrency slot.
-      // cancelJob() releases the key slot internally. For other error types
-      // (poll itself failed, download failed) we still need to release the key
-      // since the job is dead to us.
+      // On a stall/timeout the job is still alive on 69labs — cancel it to free
+      // its concurrency slot (cancelJob releases the key slot internally). For
+      // other error types (FAILED/CENSORED, download failed) the job is already
+      // dead, so we just release the key. NOTE: must match pollJob's ACTUAL
+      // messages ("stalled", "hard cap", "timed out") — the old /polling timeout/
+      // never matched, leaking a remote slot on every stalled job.
       if (lastJobId) {
-        if (/polling timeout/i.test(msg)) {
+        if (/stalled|hard cap|timed out|timeout/i.test(msg)) {
           const cancelled = await cancelJob("images", lastJobId);
           log(runId, "debug", `Cancelled ${lastJobId.slice(0, 8)} → ${cancelled ? "ok" : "skipped"}`, {
             stage: "image",

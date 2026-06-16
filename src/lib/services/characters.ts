@@ -141,6 +141,15 @@ async function generatePortrait(
     await downloadKieFile(urls[0], outPath);
     return outPath;
   }
+  if (provider !== "69labs") {
+    // replicate / openai / fal don't support the 69labs jobId path. Dispatch via
+    // generateImageToPath so the portrait uses the SELECTED provider instead of
+    // silently hitting 69labs (which threw a misleading "LABS69_API_KEY not set").
+    // Lazy import avoids a static import cycle with image-gen.
+    const { generateImageToPath } = await import("./image-gen");
+    await generateImageToPath(runId, prompt, outPath);
+    return outPath;
+  }
   const jobId = await createImageJob({ prompt, model, aspectRatio: "3:4", resolution, runId });
   try {
     await pollJob("images", jobId, runId, "character");

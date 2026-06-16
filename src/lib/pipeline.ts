@@ -196,6 +196,18 @@ export async function runPipeline(runId: string, script: string) {
     const anchorPromise = new Map<number, Promise<string | null>>();
     if (channel.continuity) {
       const MAX_SHOT_SCENES = 6;
+      // Only an AI image can anchor or chain. Stock/real scenes never publish or
+      // wait for an anchor frame.
+      const usesAiImage = (s: typeof scenes[number]): boolean => {
+        const isRealSubject =
+          channel.realSubjects &&
+          (s.visual_type === "real_image" || s.visual_type === "person_overlay");
+        const isClip = !isRealSubject && channel.clipsSource !== "none" && clipTargets.has(s.index);
+        return (
+          (isClip && channel.clipsSource === "ai") ||
+          (!isClip && !isRealSubject && channel.stillsSource === "ai")
+        );
+      };
       let shotId = -1;
       let since = 0;
       for (const s of scenes) {
@@ -203,7 +215,13 @@ export async function runPipeline(runId: string, script: string) {
           shotId++;
           since = 0;
           shotAnchorIndex.set(shotId, s.index);
-          anchorPromise.set(shotId, new Promise<string | null>((res) => anchorResolve.set(shotId, res)));
+          // Only create the anchor promise when the anchor is an AI image. For a
+          // stock/real anchor, AI followers in the shot then short-circuit
+          // (awaitAnchor → null) instead of burning the 120s cap waiting for a
+          // frame that will never be published.
+          if (usesAiImage(s)) {
+            anchorPromise.set(shotId, new Promise<string | null>((res) => anchorResolve.set(shotId, res)));
+          }
         }
         shotIdByIndex.set(s.index, shotId);
         since++;
@@ -355,6 +373,11 @@ export async function runPipeline(runId: string, script: string) {
         const audioPromise: Promise<TtsResult | null> = channel.voiceover
           ? limitTts(() => synthesizeScene(runId, scene, audioDir, channel.voiceId))
           : Promise.resolve(null);
+        // Defensive: if makeVisual() rejects, Promise.all short-circuits; keep a
+        // no-op catch so a later TTS rejection can never surface as an
+        // unhandledRejection (which, under Node's default policy, can crash the
+        // whole process on a long flaky run).
+        audioPromise.catch(() => {});
         const [visual, ttsAudio] = await Promise.all([makeVisual(), audioPromise]);
 
         // Continuity: publish this shot's anchor frame so the rest of the shot
@@ -399,6 +422,11 @@ export async function runPipeline(runId: string, script: string) {
           _imgProvider: visual.provider,
         };
       } catch (e) {
+        // A user cancel must win over the per-scene "failed → null" path: if we
+        // swallowed it, cancelled scenes would count toward the 25% fail-gate and
+        // the run would be mislabelled "error" instead of "cancelled". Re-throw so
+        // it propagates out of the worker pool to the outer CancelledError handler.
+        if (e instanceof CancelledError) throw e;
         const msg = e instanceof Error ? e.message : String(e);
         log(runId, "error", `Scene #${scene.index} failed: ${msg.slice(0, 200)}`, { stage: "pipeline" });
         return null;
