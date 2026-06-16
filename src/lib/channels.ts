@@ -34,6 +34,8 @@ export interface Channel {
   /** Master thumbnail prompt (style/recipe). The LLM turns it + the script +
    *  title into a per-video thumbnail prompt. */
   thumbnail_prompt: string;
+  /** Connected scenes — keep the same subjects/look across each shot. */
+  continuity: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -58,26 +60,28 @@ export interface ResolvedChannel {
   thumbnail: boolean;
   /** Master thumbnail prompt (empty = thumbnails effectively off). */
   thumbnailPrompt: string;
+  /** Connected-scenes continuity (anchor each shot's look across its scenes). */
+  continuity: boolean;
 }
 
 const listStmt = db.prepare(
   `SELECT id, name, scene_split, image_prompt, animation_motion,
           clips_source, clips_ratio, stills_source, real_subjects, voiceover, keep_clip_audio,
-          battle_card, voice_id, thumbnail, thumbnail_prompt, created_at, updated_at
+          battle_card, voice_id, thumbnail, thumbnail_prompt, continuity, created_at, updated_at
    FROM channels ORDER BY name COLLATE NOCASE`
 );
 const getStmt = db.prepare(
   `SELECT id, name, scene_split, image_prompt, animation_motion,
-          clips_source, clips_ratio, stills_source, real_subjects, voiceover, keep_clip_audio, battle_card, voice_id, thumbnail, thumbnail_prompt
+          clips_source, clips_ratio, stills_source, real_subjects, voiceover, keep_clip_audio, battle_card, voice_id, thumbnail, thumbnail_prompt, continuity
    FROM channels WHERE id = ?`
 );
 const upsertStmt = db.prepare(
   `INSERT INTO channels
      (id, name, scene_split, image_prompt, animation_motion,
-      clips_source, clips_ratio, stills_source, real_subjects, voiceover, keep_clip_audio, battle_card, voice_id, thumbnail, thumbnail_prompt, updated_at)
+      clips_source, clips_ratio, stills_source, real_subjects, voiceover, keep_clip_audio, battle_card, voice_id, thumbnail, thumbnail_prompt, continuity, updated_at)
    VALUES
      (@id, @name, @scene_split, @image_prompt, @animation_motion,
-      @clips_source, @clips_ratio, @stills_source, @real_subjects, @voiceover, @keep_clip_audio, @battle_card, @voice_id, @thumbnail, @thumbnail_prompt, datetime('now'))
+      @clips_source, @clips_ratio, @stills_source, @real_subjects, @voiceover, @keep_clip_audio, @battle_card, @voice_id, @thumbnail, @thumbnail_prompt, @continuity, datetime('now'))
    ON CONFLICT(id) DO UPDATE SET
      name = excluded.name,
      scene_split = excluded.scene_split,
@@ -93,6 +97,7 @@ const upsertStmt = db.prepare(
      voice_id = excluded.voice_id,
      thumbnail = excluded.thumbnail,
      thumbnail_prompt = excluded.thumbnail_prompt,
+     continuity = excluded.continuity,
      updated_at = datetime('now')`
 );
 const deleteStmt = db.prepare("DELETE FROM channels WHERE id = ?");
@@ -130,6 +135,7 @@ interface Row {
   voice_id?: string;
   thumbnail: unknown;
   thumbnail_prompt?: string;
+  continuity: unknown;
   created_at?: string;
   updated_at?: string;
 }
@@ -151,6 +157,7 @@ function mapRow(r: Row): Channel {
     voice_id: r.voice_id ?? "",
     thumbnail: toBool(r.thumbnail, false),
     thumbnail_prompt: r.thumbnail_prompt ?? "",
+    continuity: toBool(r.continuity, false),
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
@@ -181,6 +188,7 @@ export function upsertChannel(c: {
   voice_id?: string;
   thumbnail?: boolean | string;
   thumbnail_prompt?: string;
+  continuity?: boolean | string;
 }): void {
   upsertStmt.run({
     id: c.id,
@@ -198,6 +206,7 @@ export function upsertChannel(c: {
     voice_id: (c.voice_id ?? "").trim(),
     thumbnail: toBool(c.thumbnail, false) ? "1" : "0",
     thumbnail_prompt: (c.thumbnail_prompt ?? "").trim(),
+    continuity: toBool(c.continuity, false) ? "1" : "0",
   });
 }
 
@@ -235,6 +244,9 @@ export function resolveChannel(channelId: string | null | undefined): ResolvedCh
       voiceId: getSetting("TTS_VOICE_ID") || "",
       thumbnail: false,
       thumbnailPrompt: "",
+      // Continuity is ON by default — it's just how AI generation works now
+      // (connected scenes), not a separate mode. No-ops for stock/real visuals.
+      continuity: true,
     };
   }
   return {
@@ -253,5 +265,7 @@ export function resolveChannel(channelId: string | null | undefined): ResolvedCh
     voiceId: ch.voice_id.trim() || (getSetting("TTS_VOICE_ID") || ""),
     thumbnail: ch.thumbnail,
     thumbnailPrompt: ch.thumbnail_prompt,
+    // Always on (connected scenes is the default AI behavior, not a toggle).
+    continuity: true,
   };
 }

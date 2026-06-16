@@ -28,7 +28,10 @@ export async function generateImage(
   outDir: string,
   characterRefs?: Record<string, string>,
   imageStyle?: string,
-  allowReal = true
+  allowReal = true,
+  /** Continuity: a public image URL of the shot's anchor frame. When set, this
+   *  scene is generated to match it (same subjects/look, different angle). */
+  chainRefUrl?: string
 ): Promise<ImageResult> {
   const provider = (getSetting("IMAGE_PROVIDER") || "69labs").toLowerCase();
   const styleSuffix = imageStyle ?? getPrompt("image_prompt");
@@ -50,12 +53,19 @@ export async function generateImage(
     }
   }
 
+  // Visual continuity: when a shot anchor is provided, instruct the model to keep
+  // the SAME subjects/look as the reference and only change angle + action.
+  const continuityClause = chainRefUrl
+    ? ` IMPORTANT: this shot CONTINUES the scene shown in the LAST reference image — keep the SAME animals/subjects with the SAME appearance, the SAME environment and lighting; change ONLY the camera angle and the action described above. Photorealistic, perfectly consistent with that reference.`
+    : "";
   const finalPrompt =
-    refUrls.length > 0
+    (refUrls.length > 0
       ? `${scene.visual_prompt}. The character(s) ${refNames
           .map((n) => `"${n}"`)
           .join(", ")} must match the person(s) in the provided reference image(s) — keep their face, hair, and clothing consistent. ${styleSuffix}`
-      : `${scene.visual_prompt}, ${styleSuffix}`;
+      : `${scene.visual_prompt}, ${styleSuffix}`) + continuityClause;
+  // Anchor ref goes LAST so the "LAST reference image" wording above points at it.
+  const allRefs = chainRefUrl ? [...refUrls, chainRefUrl] : refUrls;
   const fileName = `scene_${String(scene.index).padStart(3, "0")}.png`;
   const filePath = path.join(outDir, fileName);
 
@@ -91,12 +101,12 @@ export async function generateImage(
   );
 
   if (provider === "69labs") {
-    const jobId = await labs69Image(runId, finalPrompt, filePath, refUrls);
+    const jobId = await labs69Image(runId, finalPrompt, filePath, allRefs);
     log(runId, "success", `Image saved: ${fileName}`, { stage: "image" });
     return { filePath, providerJobId: jobId, provider };
   }
   if (provider === "kie") {
-    await kieImage(runId, finalPrompt, filePath, refUrls);
+    await kieImage(runId, finalPrompt, filePath, allRefs);
     log(runId, "success", `Image saved: ${fileName}`, { stage: "image" });
     return { filePath, provider };
   }

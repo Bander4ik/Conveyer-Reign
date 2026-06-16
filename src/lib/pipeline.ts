@@ -7,6 +7,7 @@ import { getRunDir } from "./run-paths";
 import { pLimit } from "./plimit";
 import { splitScript } from "./services/scene-split";
 import { parseCast, prepareCharacterReferences } from "./services/characters";
+import { uploadPublicImage } from "./services/image-host";
 import { resolveChannel } from "./channels";
 import { synthesizeScene } from "./services/tts";
 import { generateImage } from "./services/image-gen";
@@ -68,7 +69,7 @@ export async function runPipeline(runId: string, script: string) {
       });
     }
     const [scenes, characterRefs] = await Promise.all([
-      splitScript(runId, script, cast, channel.sceneSplit),
+      splitScript(runId, script, cast, channel.sceneSplit, channel.continuity),
       prepareCharacterReferences(runId, cast, charDir, channel.imageStyle).catch((e) => {
         log(runId, "warn", `Character prep failed: ${(e as Error).message}`, { stage: "character" });
         return {} as Record<string, string>;
@@ -184,7 +185,52 @@ export async function runPipeline(runId: string, script: string) {
       _imgProvider?: string;
     }) | null;
 
+    // ── Continuity: group scenes into "shots" (same subjects/place) ──────────
+    // The FIRST scene of each shot is the ANCHOR; once its frame is generated it
+    // is uploaded and reused as a reference for the rest of the shot, so the look
+    // stays consistent. A shot also re-anchors every MAX_SHOT_SCENES so a
+    // mistagged long run can't collapse the whole video to one frame.
+    const shotIdByIndex = new Map<number, number>();
+    const shotAnchorIndex = new Map<number, number>();
+    const anchorResolve = new Map<number, (u: string | null) => void>();
+    const anchorPromise = new Map<number, Promise<string | null>>();
+    if (channel.continuity) {
+      const MAX_SHOT_SCENES = 6;
+      let shotId = -1;
+      let since = 0;
+      for (const s of scenes) {
+        if (shotId < 0 || s.new_shot || since >= MAX_SHOT_SCENES) {
+          shotId++;
+          since = 0;
+          shotAnchorIndex.set(shotId, s.index);
+          anchorPromise.set(shotId, new Promise<string | null>((res) => anchorResolve.set(shotId, res)));
+        }
+        shotIdByIndex.set(s.index, shotId);
+        since++;
+      }
+      log(runId, "info", `Continuity ON — ${shotAnchorIndex.size} shot(s) across ${scenes.length} scenes`, {
+        stage: "pipeline",
+      });
+    }
+    // Non-anchor scenes wait for their shot's anchor frame (cap the wait so a
+    // failed anchor never hangs the run — they just generate fresh).
+    const awaitAnchor = (sid: number): Promise<string | null> => {
+      const p = anchorPromise.get(sid);
+      if (!p) return Promise.resolve(null);
+      // Race the anchor against a 120s cap, but CLEAR the timer once the anchor
+      // settles so long runs don't leave one live timer per waiting scene.
+      return new Promise<string | null>((resolve) => {
+        const t = setTimeout(() => resolve(null), 120_000);
+        p.then(
+          (u) => { clearTimeout(t); resolve(u); },
+          () => { clearTimeout(t); resolve(null); }
+        );
+      });
+    };
+
     const processScene = async (scene: typeof scenes[number]): Promise<SceneResult> => {
+      const shotId = channel.continuity ? shotIdByIndex.get(scene.index) ?? -1 : -1;
+      const isAnchor = channel.continuity && shotAnchorIndex.get(shotId) === scene.index;
       try {
         checkCancelled(runId);
         const pad = String(scene.index).padStart(3, "0");
@@ -197,6 +243,16 @@ export async function runPipeline(runId: string, script: string) {
         // Clip scene → moving footage (AI Veo or real stock), per the ratio.
         const isClip =
           !isRealSubject && channel.clipsSource !== "none" && clipTargets.has(scene.index);
+
+        // Continuity: an AI-image scene that is NOT its shot's anchor references
+        // the anchor's frame so the subjects/look stay the same across the shot.
+        const usesAiImage =
+          (isClip && channel.clipsSource === "ai") ||
+          (!isClip && !isRealSubject && channel.stillsSource === "ai");
+        let chainRefUrl: string | undefined;
+        if (channel.continuity && usesAiImage && !isAnchor) {
+          chainRefUrl = (await awaitAnchor(shotId)) ?? undefined;
+        }
 
         // ── Produce the visual ──────────────────────────────────────────────
         const makeVisual = async (): Promise<{
@@ -245,7 +301,7 @@ export async function runPipeline(runId: string, script: string) {
             }
             // AI clip: AI image → Veo (Ken-Burns fallback on failure).
             const img = await limitImg(() =>
-              generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects)
+              generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects, chainRefUrl)
             );
             let videoPath: string | null = null;
             if (img.provider !== "wikimedia") {
@@ -290,7 +346,7 @@ export async function runPipeline(runId: string, script: string) {
             return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
           }
           const img = await limitImg(() =>
-            generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects)
+            generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects, chainRefUrl)
           );
           return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
         };
@@ -300,6 +356,16 @@ export async function runPipeline(runId: string, script: string) {
           ? limitTts(() => synthesizeScene(runId, scene, audioDir, channel.voiceId))
           : Promise.resolve(null);
         const [visual, ttsAudio] = await Promise.all([makeVisual(), audioPromise]);
+
+        // Continuity: publish this shot's anchor frame so the rest of the shot
+        // can match it (upload to a public URL the image model can fetch).
+        if (isAnchor && channel.continuity && usesAiImage && visual.imagePath) {
+          try {
+            anchorResolve.get(shotId)?.(await uploadPublicImage(visual.imagePath));
+          } catch {
+            anchorResolve.get(shotId)?.(null);
+          }
+        }
 
         // ── Audio ───────────────────────────────────────────────────────────
         let audio: TtsResult;
@@ -336,6 +402,10 @@ export async function runPipeline(runId: string, script: string) {
         const msg = e instanceof Error ? e.message : String(e);
         log(runId, "error", `Scene #${scene.index} failed: ${msg.slice(0, 200)}`, { stage: "pipeline" });
         return null;
+      } finally {
+        // Safety: never leave the rest of a shot waiting on a failed/non-AI anchor
+        // (resolving twice is a no-op — a real URL set above already won).
+        if (isAnchor) anchorResolve.get(shotId)?.(null);
       }
     };
 

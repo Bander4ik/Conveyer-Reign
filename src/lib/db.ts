@@ -103,6 +103,9 @@ tryAddColumn("channels", "voice_id TEXT");
 tryAddColumn("channels", "thumbnail TEXT");
 tryAddColumn("channels", "thumbnail_prompt TEXT");
 
+// Channels v6 — connected-scenes continuity (anchor each shot's look).
+tryAddColumn("channels", "continuity TEXT");
+
 // Migrations for older DBs. SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT
 // EXISTS`, so we attempt and ignore failure when the column already exists.
 function tryAddColumn(table: string, columnDecl: string): void {

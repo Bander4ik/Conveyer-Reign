@@ -26,6 +26,7 @@ export async function POST(req: Request) {
     voice_id?: string;
     thumbnail?: boolean | string;
     thumbnail_prompt?: string;
+    continuity?: boolean | string;
   };
   const id = body.id?.trim() || randomUUID();
   upsertChannel({ ...body, id, name: body.name ?? "" });

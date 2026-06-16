@@ -67,7 +67,7 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
         log(id, "info", `Loaded ${scenes.length} scenes from scenes.json`, { stage: "pipeline" });
       } else {
         log(id, "info", "scenes.json missing — re-splitting script via Gemini", { stage: "pipeline" });
-        scenes = await splitScript(id, row.script, [], channel.sceneSplit);
+        scenes = await splitScript(id, row.script, [], channel.sceneSplit, channel.continuity);
         fs.writeFileSync(scenesFile, JSON.stringify(scenes, null, 2), "utf-8");
       }
 

@@ -20,6 +20,7 @@ interface Channel {
   voice_id: string;
   thumbnail: boolean;
   thumbnail_prompt: string;
+  continuity: boolean;
 }
 
 const HELP = {
@@ -39,6 +40,8 @@ const HELP = {
     "Auto-generate YouTube thumbnail options at the end of each run. The system reads your whole script + the video title and makes a few thumbnails in your style to choose from (shown on the run page).",
   thumbnailPrompt:
     "Your MASTER thumbnail recipe — the overall look for this channel's thumbnails (subject framing, lighting, mood, space for a title…). You write it once. For each video the AI turns this + the title + the full script into a specific thumbnail prompt and generates several options.",
+  continuity:
+    "Make consecutive scenes look like ONE continuous story instead of unrelated clips glued together. Within a 'shot' the SAME animals/subjects keep the SAME look, just from a different angle/action — Gemini is told it's one story, and each shot's first frame is reused as a reference for the rest. Best for AI-generated visuals (a bit slower per shot). Realism comes from your Image Style prompt.",
   battle:
     "Adds an intro “VS” stat card (e.g. weight / bite force / speed) at the start. Works on top of any visual setup.",
   sceneSplit:
@@ -59,6 +62,7 @@ function blank(defaults: Pick<Channel, "scene_split" | "image_prompt" | "animati
     voice_id: "",
     thumbnail: false,
     thumbnail_prompt: "",
+    continuity: false,
     scene_split: defaults.scene_split,
     image_prompt: defaults.image_prompt,
     animation_motion: defaults.animation_motion,

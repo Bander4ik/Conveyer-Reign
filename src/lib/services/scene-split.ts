@@ -22,6 +22,10 @@ export interface Scene {
   person_name?: string;
   wikipedia_lookup?: string;
   real_image_query?: string;
+  /** Visual continuity: true = this scene CUTS to a new subject/place/chapter
+   *  (start of a new "shot"); false/absent = continues the same subjects+setting
+   *  as the previous scene. Used to anchor a shot's look across its scenes. */
+  new_shot?: boolean;
 }
 
 /** A character the script splitter should tag scenes with. */
@@ -72,6 +76,23 @@ Only use "real_image"/"person_overlay" when a real photo genuinely exists and fi
 }
 
 /**
+ * Appended ONLY when the channel has "Connected scenes" (continuity) on. Tells
+ * the model to treat the script as ONE continuous story and tag where a real
+ * visual cut happens, so the image stage can keep the SAME subjects/look across
+ * the scenes of a shot.
+ */
+function buildContinuitySuffix(): string {
+  return `
+
+── ONE CONTINUOUS STORY (visual continuity) ──
+Treat the WHOLE script as ONE continuous, connected story — not a list of separate, unrelated clips. Group consecutive sentences that stay in the SAME visual scene (same subjects/animals, same place, same time of day, same lighting) into one "shot". Within a shot, each scene shows the SAME subjects from a slightly different angle or a later moment of the SAME action that the narration describes — NOT a brand-new picture.
+For EACH scene add a boolean field "new_shot":
+- "new_shot": true ONLY when the scene visually CUTS to something new — a different animal/subject, a different location, or a new chapter ("meanwhile…", "but the rival…", "next round").
+- "new_shot": false (you may also omit it) when the scene continues the SAME subjects and place as the previous scene — this is the common case inside a flowing sequence.
+The very first scene is always a new shot. Keep MOST consecutive scenes in a continuous sequence as new_shot:false so the video reads as one unfolding event, not a montage.`;
+}
+
+/**
  * Chunk threshold for scene-split.
  *
  * Gemini 2.5 Flash/Pro caps output at 65 535 tokens. A scene-split JSON
@@ -96,11 +117,15 @@ export async function splitScript(
   runId: string,
   script: string,
   cast: CastMember[] = [],
-  sceneSplitPrompt?: string
+  sceneSplitPrompt?: string,
+  continuity = false
 ): Promise<Scene[]> {
   const provider = (getSetting("SCENE_SPLIT_PROVIDER") || "google").toLowerCase();
   const systemPrompt =
-    (sceneSplitPrompt ?? getPrompt("scene_split")) + buildCastSuffix(cast) + buildRoutingSuffix();
+    (sceneSplitPrompt ?? getPrompt("scene_split")) +
+    buildCastSuffix(cast) +
+    buildRoutingSuffix() +
+    (continuity ? buildContinuitySuffix() : "");
 
   const totalWords = script.trim().split(/\s+/).filter(Boolean).length;
   log(runId, "info", `Splitting script (${provider}) — ${totalWords} words`, {
@@ -235,6 +260,7 @@ async function splitOneChunk(
     person_name: typeof s.person_name === "string" ? s.person_name.trim() : "",
     wikipedia_lookup: typeof s.wikipedia_lookup === "string" ? s.wikipedia_lookup.trim() : "",
     real_image_query: typeof s.real_image_query === "string" ? s.real_image_query.trim() : "",
+    new_shot: Boolean(s.new_shot),
   }));
 }
 
