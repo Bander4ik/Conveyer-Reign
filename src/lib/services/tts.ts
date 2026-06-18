@@ -5,6 +5,7 @@ import { log } from "../logger";
 import type { Scene } from "./scene-split";
 import { createTtsJob, pollJob, downloadJob } from "./labs69";
 import { createKieTask, pollKieTask, downloadKieFile } from "./kie";
+import ffmpeg from "fluent-ffmpeg";
 
 export interface TtsResult {
   /** Path to the mp3 file. */
@@ -55,6 +56,103 @@ export async function synthesizeScene(
     stage: "tts",
   });
   return { filePath, durationSec };
+}
+
+/** Configure fluent-ffmpeg to honor FFMPEG_PATH (Windows / non-PATH installs). */
+function configureFfmpeg(): void {
+  const p = getSetting("FFMPEG_PATH");
+  if (p) {
+    ffmpeg.setFfmpegPath(p);
+    const probe = p.replace(/ffmpeg(\.exe)?$/i, "ffprobe$1");
+    if (fs.existsSync(probe)) ffmpeg.setFfprobePath(probe);
+  }
+}
+
+/** Duration in seconds via ffprobe; size-based estimate if ffprobe is missing. */
+function probeDurationSafe(filePath: string): Promise<number> {
+  return new Promise((resolve) => {
+    ffmpeg.ffprobe(filePath, (err, data) => {
+      const d = data?.format?.duration;
+      if (err || typeof d !== "number" || !isFinite(d)) {
+        try { resolve(Math.max(1, fs.statSync(filePath).size / 16000)); } catch { resolve(1); }
+        return;
+      }
+      resolve(d);
+    });
+  });
+}
+
+/** Provider dispatch for raw text → mp3 (shared by single-shot synthesis). */
+async function dispatchTtsText(runId: string, text: string, outPath: string, voiceId?: string): Promise<void> {
+  const provider = (getSetting("TTS_PROVIDER") || "69labs").toLowerCase();
+  if (provider === "69labs") await labs69Tts(runId, text, outPath, voiceId);
+  else if (provider === "kie") await kieTts(runId, text, outPath, voiceId);
+  else if (provider === "elevenlabs") await elevenLabs(text, outPath, voiceId);
+  else if (provider === "openai") await openaiTts(text, outPath, voiceId);
+  else throw new Error(`Unknown TTS provider: ${provider}`);
+}
+
+/**
+ * Single-shot synthesis: ONE continuous voiceover for the whole script. Long
+ * scripts are chunked at sentence boundaries (same voice across chunks) and the
+ * mp3s concatenated — far fewer intonation breaks than per-scene TTS. Returns
+ * the mp3 path + its ffprobe duration. Used by tts-align.ts (single-shot mode).
+ */
+export async function synthesizeFullScript(
+  runId: string,
+  text: string,
+  outPath: string,
+  options: { voiceOverride?: string | null } = {}
+): Promise<TtsResult> {
+  configureFfmpeg();
+  const voiceId = (options.voiceOverride ?? "").trim() || undefined;
+  const provider = (getSetting("TTS_PROVIDER") || "69labs").toLowerCase();
+  log(runId, "info", `TTS full script (${provider}, ${text.length} chars)`, { stage: "tts" });
+
+  const MAX_CHARS = 4500;
+  if (text.length > MAX_CHARS) {
+    const sentences = text.match(/[^.!?]+[.!?]+\s*/g) ?? [text];
+    const chunks: string[] = [];
+    let cur = "";
+    for (const s of sentences) {
+      if ((cur + s).length > MAX_CHARS && cur) { chunks.push(cur); cur = s; }
+      else cur += s;
+    }
+    if (cur) chunks.push(cur);
+    log(runId, "info", `Long script — chunking into ${chunks.length} TTS calls`, { stage: "tts" });
+
+    const chunkPaths: string[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkPath = outPath.replace(/\.mp3$/i, `__chunk${String(i).padStart(2, "0")}.mp3`);
+      log(runId, "info", `TTS chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars)`, { stage: "tts" });
+      await dispatchTtsText(runId, chunks[i].trim(), chunkPath, voiceId);
+      chunkPaths.push(chunkPath);
+    }
+    // Concat the chunk mp3s (concat demuxer + stream copy — same voice/codec).
+    const listFile = outPath.replace(/\.mp3$/i, `__concat.txt`);
+    fs.writeFileSync(
+      listFile,
+      chunkPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n") + "\n",
+      "utf-8"
+    );
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg()
+        .input(listFile)
+        .inputOptions(["-f concat", "-safe 0"])
+        .outputOptions(["-c copy"])
+        .on("error", reject)
+        .on("end", () => resolve())
+        .save(outPath);
+    });
+    for (const p of chunkPaths) { try { fs.unlinkSync(p); } catch {} }
+    try { fs.unlinkSync(listFile); } catch {}
+  } else {
+    await dispatchTtsText(runId, text, outPath, voiceId);
+  }
+
+  const durationSec = await probeDurationSafe(outPath);
+  log(runId, "success", `TTS full script done: ${path.basename(outPath)} (${durationSec.toFixed(1)}s)`, { stage: "tts" });
+  return { filePath: outPath, durationSec };
 }
 
 async function labs69Tts(runId: string, text: string, outPath: string, voiceOverride?: string) {

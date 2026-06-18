@@ -16,6 +16,7 @@ export const SETTING_KEYS = [
   "ANTHROPIC_API_KEY",       // Claude (alternative to Gemini)
   "OPENAI_API_KEY",          // OpenAI TTS / image backup
   "FAL_API_KEY",             // fal.ai (alternative to Replicate)
+  "GROQ_API_KEY",            // Groq Whisper — word timestamps for single-shot voiceover alignment
   "PEXELS_API_KEY",          // Pexels — real stock footage (video + photo). One key per line for multiple.
   "FFMPEG_PATH",             // absolute path to ffmpeg.exe if not in system PATH
 
@@ -27,6 +28,7 @@ export const SETTING_KEYS = [
   "SCENE_SPLIT_MODEL",       // e.g. gemini-flash-latest, claude-sonnet-4-6
 
   // ── Text-to-Speech ────────────────────────────────────────────────
+  "TTS_MODE",                // per-scene (default) | single-shot (one continuous voiceover + Whisper word-alignment; needs GROQ_API_KEY)
   "TTS_PROVIDER",            // 69labs | kie | elevenlabs | openai
   "TTS_VOICE_PROVIDER",      // For 69labs: edgetts | elevenlabs | voice-clone
   "TTS_VOICE_ID",            // Voice id (ElevenLabs / Edge / clone UUID)
@@ -182,6 +184,7 @@ export const DEFAULTS: Record<SettingKey, string> = {
   ANTHROPIC_API_KEY: "",
   OPENAI_API_KEY: "",
   FAL_API_KEY: "",
+  GROQ_API_KEY: "",
   PEXELS_API_KEY: "",
   FFMPEG_PATH: "",
 
@@ -197,6 +200,10 @@ export const DEFAULTS: Record<SettingKey, string> = {
   // Edge TTS (free Microsoft voices) and voice-clone are the alternatives,
   // switchable via TTS_VOICE_PROVIDER.
   TTS_PROVIDER: "69labs",
+  // per-scene = one TTS call per scene (default). single-shot = one continuous
+  // voiceover for the whole script + Groq Whisper word-alignment to scene
+  // boundaries — fluid narration, no per-scene "breaths". Needs GROQ_API_KEY.
+  TTS_MODE: "per-scene",
   TTS_VOICE_PROVIDER: "elevenlabs",
   TTS_VOICE_ID: "G17SuINrv2H9FC6nvetn", // ElevenLabs "Christopher" — warm documentary male
   TTS_MODEL: "eleven_multilingual_v2",

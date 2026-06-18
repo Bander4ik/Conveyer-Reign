@@ -50,6 +50,11 @@ const GROUPS: Group[] = [
     subtitle: "Picks the narrator voice and which TTS service generates the audio.",
     fields: [
       {
+        key: "TTS_MODE",
+        desc: "How the narration is built. `per-scene` (default) = one TTS call per scene, then stitched — simple, no extra key. `single-shot` = ONE continuous voiceover for the WHOLE script, then Groq Whisper word-aligns each scene's visual to it — fluid narration with no per-scene 'breaths' or seams. single-shot REQUIRES GROQ_API_KEY (in Optional / Alternative Providers below); without it the run stops with a clear message (it never silently falls back).",
+        examples: "per-scene  /  single-shot (needs GROQ_API_KEY)",
+      },
+      {
         key: "TTS_PROVIDER",
         desc: "Top-level routing of TTS jobs. `69labs` is the default and covers all sub-providers below. `kie` uses kie.ai's ElevenLabs gateway (same voice ids, needs KIE_API_KEY). Direct `elevenlabs` skips the gateways and uses ElevenLabs API key. `openai` uses gpt-4o-mini-tts. Tip: the one-switch AI Provider on the main Settings page sets this together with images and video.",
         examples: "69labs  /  kie  /  elevenlabs  /  openai",
@@ -344,6 +349,11 @@ const GROUPS: Group[] = [
         key: "OPENAI_API_KEY",
         desc: "OpenAI key — for backup TTS (gpt-4o-mini-tts) or gpt-image-2 images.",
         examples: "Sign up at https://platform.openai.com",
+      },
+      {
+        key: "GROQ_API_KEY",
+        desc: "Groq key — used ONLY for single-shot voiceover (Voice Over → TTS_MODE = single-shot). Groq Whisper transcribes the one continuous voiceover and returns word-level timestamps so each scene's visual lines up with the narration. Pennies per video (~$0.006 for 3 min). Not needed for the default per-scene mode.",
+        examples: "Free key at https://console.groq.com → API Keys",
       },
     ],
   },

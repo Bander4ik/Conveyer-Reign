@@ -731,3 +731,275 @@ function concatWithCrossfade(
       .save(finalPath);
   });
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// Single-shot TTS assembly (one continuous voiceover + Whisper-aligned ranges)
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Configure fluent-ffmpeg to honor FFMPEG_PATH (single-shot path runs its own
+ *  ffmpeg calls; mirror the setup assembleVideo does inline). */
+function ensureFfmpegPaths(): void {
+  const ffmpegPath = getSetting("FFMPEG_PATH");
+  if (ffmpegPath) {
+    ffmpeg.setFfmpegPath(ffmpegPath);
+    const ffprobePath = ffmpegPath.replace(/ffmpeg(\.exe)?$/i, "ffprobe$1");
+    if (fs.existsSync(ffprobePath)) ffmpeg.setFfprobePath(ffprobePath);
+  }
+}
+
+/** Per-scene input for single-shot assembly: a visual + its [startMs,endMs]
+ *  slice inside the ONE global voiceover (from Whisper word-alignment). */
+export interface SingleShotInput {
+  scene: Scene;
+  /** Poster / Ken-Burns source / static-card image. */
+  imagePath: string;
+  /** Veo (or stock) clip when this scene moves; null → Ken-Burns the still. */
+  videoPath?: string | null;
+  startMs: number;
+  endMs: number;
+  /** Intro stat card etc. — show full-frame, static. */
+  staticCard?: boolean;
+}
+
+/**
+ * Assemble the final video in single-shot mode: render each scene's visual
+ * SILENTLY at its Whisper-aligned duration, hard-concat them (NO xfade — even a
+ * small crossfade desyncs the visual timeline against the single continuous
+ * audio), then mux the one global voiceover over the whole concat. Per-scene
+ * render failures are isolated (skipped) like the standard assembler.
+ */
+export async function assembleSingleShot(
+  runId: string,
+  inputs: SingleShotInput[],
+  globalAudioPath: string,
+  outDir: string
+): Promise<string> {
+  ensureFfmpegPaths();
+  const resolution = getSetting("VIDEO_RESOLUTION") || "1920x1080";
+  const fps = Number(getSetting("VIDEO_FPS") || "30");
+  const assembleConcurrency = Math.max(1, Number(getSetting("ASSEMBLE_CONCURRENCY") || "4"));
+  const [w, h] = resolution.split("x").map(Number);
+
+  const clipsDir = path.join(outDir, "clips");
+  if (!fs.existsSync(clipsDir)) fs.mkdirSync(clipsDir, { recursive: true });
+
+  log(
+    runId,
+    "info",
+    `Single-shot assembly: ${inputs.length} silent clips → global audio mux (${resolution} @${fps}fps)`,
+    { stage: "assemble" }
+  );
+
+  const limit = pLimit(assembleConcurrency);
+  const settled = await Promise.all(
+    inputs.map((item) =>
+      limit(async () => {
+        const clipPath = path.join(clipsDir, `clip_${String(item.scene.index).padStart(3, "0")}.mp4`);
+        const durationSec = Math.max(0.1, (item.endMs - item.startMs) / 1000);
+        try {
+          if (item.videoPath) {
+            await renderSilentClip(item.videoPath, clipPath, w, h, fps, durationSec);
+          } else if (item.staticCard) {
+            await renderSilentStatic(item.imagePath, clipPath, w, h, fps, durationSec);
+          } else {
+            const direction: "in" | "out" = Math.random() < 0.5 ? "in" : "out";
+            await renderSilentKenBurns(item.imagePath, clipPath, w, h, fps, durationSec, direction);
+          }
+          log(
+            runId,
+            "info",
+            `Clip #${item.scene.index} silent ${durationSec.toFixed(2)}s (${item.videoPath ? "clip" : "still"}) done`,
+            { stage: "assemble" }
+          );
+          return { path: clipPath, index: item.scene.index };
+        } catch (e) {
+          log(runId, "warn", `Clip #${item.scene.index} failed to render, skipping: ${(e as Error).message.slice(0, 160)}`, {
+            stage: "assemble",
+          });
+          return null;
+        }
+      })
+    )
+  );
+  const indexed = settled.filter((c): c is { path: string; index: number } => c !== null);
+  if (indexed.length === 0) throw new Error("All scene clips failed to render");
+  indexed.sort((a, b) => a.index - b.index);
+
+  // Hard-concat the silent clips (identical params → stream copy), then mux the
+  // ONE global voiceover over the whole thing.
+  const silentConcat = path.join(outDir, "silent_concat.mp4");
+  await concatSimple(indexed.map((c) => c.path), clipsDir, silentConcat);
+  log(runId, "info", `Concatenated ${indexed.length} silent clips into one track`, { stage: "assemble" });
+
+  const finalPath = path.join(outDir, "final.mp4");
+  await muxAudioOntoVideo(silentConcat, globalAudioPath, finalPath);
+  log(runId, "success", `Final video: ${finalPath}`, { stage: "assemble" });
+  try { fs.unlinkSync(silentConcat); } catch {}
+  return finalPath;
+}
+
+/** ONE Veo/stock clip rendered silently, trimmed/stretched/freeze-padded to
+ *  `durationSec`. Same policy as renderAnimatedClip (≤1.15× stretch, then
+ *  last-frame freeze) but no audio — the voiceover joins later in the mux. */
+async function renderSilentClip(
+  videoPath: string,
+  outPath: string,
+  w: number,
+  h: number,
+  fps: number,
+  durationSec: number
+): Promise<void> {
+  const videoDur = await probeDuration(videoPath);
+  let videoFilter = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}`;
+  if (durationSec > videoDur + 0.05) {
+    const MAX_STRETCH = 1.15;
+    const stretchFactor = Math.min(durationSec / videoDur, MAX_STRETCH);
+    if (stretchFactor > 1.01) {
+      videoFilter = `setpts=${stretchFactor.toFixed(3)}*PTS,fps=${fps},${videoFilter}`;
+    }
+    const stretchedDur = videoDur * stretchFactor;
+    const freezeNeeded = Math.max(0, durationSec - stretchedDur);
+    if (freezeNeeded > 0.05) {
+      videoFilter = `${videoFilter},tpad=stop_mode=clone:stop_duration=${freezeNeeded.toFixed(3)}`;
+    }
+  }
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(videoPath)
+      .videoFilters(videoFilter)
+      .outputOptions([
+        "-an",
+        `-r ${fps}`,
+        `-t ${durationSec.toFixed(3)}`,
+        "-c:v libx264",
+        "-preset veryfast",
+        "-crf 23",
+        "-pix_fmt yuv420p",
+        "-movflags +faststart",
+      ])
+      .on("error", reject)
+      .on("end", () => resolve())
+      .save(outPath);
+  });
+}
+
+/** Silent full-frame static still (stat card) at an exact duration. */
+function renderSilentStatic(
+  imagePath: string,
+  outPath: string,
+  w: number,
+  h: number,
+  fps: number,
+  durationSec: number
+): Promise<void> {
+  const filter = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=0x0e0f13,setsar=1,fps=${fps}`;
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(imagePath)
+      .inputOptions(["-loop 1"])
+      .videoFilters(filter)
+      .outputOptions([
+        "-an",
+        `-r ${fps}`,
+        `-t ${durationSec.toFixed(3)}`,
+        "-c:v libx264",
+        "-preset veryfast",
+        "-crf 23",
+        "-pix_fmt yuv420p",
+        "-movflags +faststart",
+      ])
+      .on("error", reject)
+      .on("end", () => resolve())
+      .save(outPath);
+  });
+}
+
+/** Silent Ken-Burns still (slow zoom + optional pan) at an exact duration —
+ *  same look as renderKenBurnsClip but no audio track. */
+function renderSilentKenBurns(
+  imagePath: string,
+  outPath: string,
+  w: number,
+  h: number,
+  fps: number,
+  durationSec: number,
+  direction: "in" | "out"
+): Promise<void> {
+  const totalFrames = Math.max(2, Math.ceil(durationSec * fps));
+  const minZoom = 1.0;
+  const maxZoom = 1.18;
+  const zoomExpr =
+    direction === "in"
+      ? `min(${minZoom}+(${maxZoom}-${minZoom})*on/${totalFrames - 1},${maxZoom})`
+      : `max(${maxZoom}-(${maxZoom}-${minZoom})*on/${totalFrames - 1},${minZoom})`;
+  const panChoice = Math.floor(Math.random() * 5);
+  let xExpr = `iw/2-(iw/zoom/2)`;
+  let yExpr = `ih/2-(ih/zoom/2)`;
+  switch (panChoice) {
+    case 1:
+      xExpr = `(iw-iw/zoom)*on/${totalFrames - 1}`;
+      yExpr = `(ih-ih/zoom)*on/${totalFrames - 1}`;
+      break;
+    case 2:
+      xExpr = `(iw-iw/zoom)*(1-on/${totalFrames - 1})`;
+      yExpr = `(ih-ih/zoom)*on/${totalFrames - 1}`;
+      break;
+    case 3:
+      xExpr = `(iw-iw/zoom)*on/${totalFrames - 1}`;
+      yExpr = `(ih-ih/zoom)*(1-on/${totalFrames - 1})`;
+      break;
+    case 4:
+      xExpr = `(iw-iw/zoom)*(1-on/${totalFrames - 1})`;
+      yExpr = `(ih-ih/zoom)*(1-on/${totalFrames - 1})`;
+      break;
+  }
+  const filter = `scale=${w * 2}:${h * 2}:flags=lanczos,zoompan=z='${zoomExpr}':x='${xExpr}':y='${yExpr}':d=${totalFrames}:s=${w}x${h}:fps=${fps}`;
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(imagePath)
+      .inputOptions(["-loop 1"])
+      .videoFilters(filter)
+      .outputOptions([
+        "-an",
+        `-r ${fps}`,
+        `-t ${durationSec.toFixed(3)}`,
+        "-c:v libx264",
+        "-preset veryfast",
+        "-crf 23",
+        "-pix_fmt yuv420p",
+        "-movflags +faststart",
+      ])
+      .on("error", reject)
+      .on("end", () => resolve())
+      .save(outPath);
+  });
+}
+
+/** Mux: copy video from `videoPath`, attach audio from `audioPath`. The
+ *  voiceover is the source of truth for length — if the silent video is
+ *  slightly shorter (alignment drift / a skipped clip), hold the last frame so
+ *  the narration is never cut; otherwise stream-copy the video (fast path). */
+async function muxAudioOntoVideo(
+  videoPath: string,
+  audioPath: string,
+  outPath: string
+): Promise<void> {
+  const [videoDur, audioDur] = await Promise.all([probeDuration(videoPath), probeDuration(audioPath)]);
+  const gap = audioDur - videoDur;
+  return new Promise((resolve, reject) => {
+    const cmd = ffmpeg().input(videoPath).input(audioPath);
+    const out: string[] = ["-map", "0:v:0", "-map", "1:a:0"];
+    if (gap > 0.15) {
+      cmd.videoFilters(`tpad=stop_mode=clone:stop_duration=${(gap + 0.5).toFixed(3)}`);
+      out.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p");
+    } else {
+      out.push("-c:v", "copy");
+    }
+    out.push("-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart");
+    cmd
+      .outputOptions(out)
+      .on("error", reject)
+      .on("end", () => resolve())
+      .save(outPath);
+  });
+}

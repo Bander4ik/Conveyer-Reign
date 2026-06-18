@@ -13,7 +13,8 @@ import { synthesizeScene } from "./services/tts";
 import { generateImage } from "./services/image-gen";
 import { animateScene, pickScenesToAnimate } from "./services/img2vid";
 import { extractMatchup, renderStatCard, makeSilentAudio, CARD_DURATION_SEC } from "./services/battle-stats";
-import { assembleVideo, extractOrSilentAudio, extractLastFrame, type AssembleInput } from "./services/video-assemble";
+import { assembleVideo, assembleSingleShot, extractOrSilentAudio, extractLastFrame, type AssembleInput, type SingleShotInput } from "./services/video-assemble";
+import { synthesizeAndAlign } from "./services/tts-align";
 import { pexelsPreflight } from "./services/stock-footage";
 import { acquireScoredFootage } from "./services/visual-source";
 import type { TtsResult } from "./services/tts";
@@ -66,6 +67,23 @@ export async function runPipeline(runId: string, script: string) {
     if (cast.length > 0) {
       log(runId, "info", `Cast: ${cast.map((c) => c.name + (c.isHost ? " (host)" : "")).join(", ")}`, {
         stage: "character",
+      });
+    }
+
+    // Single-shot voiceover mode: ONE continuous narration for the whole script,
+    // word-aligned to scene boundaries via Groq Whisper (fluid, no per-scene
+    // "breaths"). FAIL FAST when the key is missing so it's unmistakable the mode
+    // needs it — never silently fall back to per-scene while the user assumes
+    // single-shot is running.
+    const singleShot = (getSetting("TTS_MODE") || "per-scene").toLowerCase() === "single-shot";
+    if (singleShot && !getSetting("GROQ_API_KEY").trim()) {
+      throw new Error(
+        "Single-shot voiceover (TTS_MODE=single-shot) needs GROQ_API_KEY — paste it in Settings (free key at console.groq.com), or set TTS_MODE back to per-scene."
+      );
+    }
+    if (singleShot) {
+      log(runId, "info", "TTS mode: single-shot — one continuous voiceover + Whisper word-alignment to scene boundaries", {
+        stage: "pipeline",
       });
     }
     const [scenes, characterRefs] = await Promise.all([
@@ -477,7 +495,7 @@ export async function runPipeline(runId: string, script: string) {
         };
 
         // Visual + (optional) voiceover in parallel.
-        const audioPromise: Promise<TtsResult | null> = channel.voiceover
+        const audioPromise: Promise<TtsResult | null> = (channel.voiceover && !singleShot)
           ? limitTts(() => synthesizeScene(runId, scene, audioDir, channel.voiceId))
           : Promise.resolve(null);
         // Defensive: if makeVisual() rejects, Promise.all short-circuits; keep a
@@ -523,6 +541,10 @@ export async function runPipeline(runId: string, script: string) {
         let audio: TtsResult;
         if (ttsAudio) {
           audio = ttsAudio;
+        } else if (singleShot) {
+          // Single-shot: per-scene audio is unused — the ONE global voiceover is
+          // muxed over the whole video at assembly. Placeholder keeps the shape.
+          audio = { filePath: "", durationSec: 0 };
         } else {
           // No voiceover: the clip's own sound (or silence), or a fixed-length
           // silent track for stills — so assembly always has an audio file.
@@ -605,39 +627,73 @@ export async function runPipeline(runId: string, script: string) {
 
     checkCancelled(runId);
 
-    // 2c. Battle data mode — prepend an intro "VS" stat card (exact figures via FFmpeg).
-    if (channel.battleCard) {
-      try {
-        const matchup = await extractMatchup(runId, script);
-        if (matchup) {
-          const [cw, cardH] = (getSetting("VIDEO_RESOLUTION") || "1920x1080").split("x").map(Number);
-          const cardPng = path.join(runDir, "stat-card.png");
-          const cardAudio = path.join(audioDir, "stat-card.mp3");
-          await renderStatCard(matchup, cardPng, cw, cardH);
-          await makeSilentAudio(cardAudio, CARD_DURATION_SEC);
-          sceneAssets.unshift({
-            scene: { index: -1, text: "", visual_prompt: "", duration_hint_sec: CARD_DURATION_SEC },
-            imagePath: cardPng,
-            videoPath: null,
-            audio: { filePath: cardAudio, durationSec: CARD_DURATION_SEC },
-            staticCard: true,
+    // 3. Assemble final video.
+    let finalPath: string;
+    if (singleShot) {
+      // ONE continuous voiceover for the whole script (synthesised once), with
+      // each scene's visual shown for its Whisper-aligned slice → fluid narration
+      // with no per-scene audio seams. (The battle stat card and the per-scene
+      // Veo-audio mix don't apply in this mode.)
+      const aligned = await synthesizeAndAlign(runId, scenes, audioDir, { voiceOverride: channel.voiceId });
+      const rangeByIdx = new Map(aligned.ranges.map((r) => [r.sceneIdx, r] as const));
+      const assetByIdx = new Map(sceneAssets.map((a) => [a.scene.index, a] as const));
+      // Fill EVERY scene's slice so the visual timeline stays in lockstep with the
+      // continuous audio — a failed visual holds the last good still over its slice.
+      let lastGoodImage = sceneAssets[0].imagePath;
+      const ssInputs: SingleShotInput[] = [];
+      for (const s of scenes) {
+        const r = rangeByIdx.get(s.index);
+        if (!r) continue;
+        const a = assetByIdx.get(s.index);
+        if (a) {
+          lastGoodImage = a.imagePath;
+          ssInputs.push({
+            scene: s,
+            imagePath: a.imagePath,
+            videoPath: a.videoPath,
+            staticCard: a.staticCard,
+            startMs: r.startMs,
+            endMs: r.endMs,
           });
-          log(
-            runId,
-            "success",
-            `Battle: added VS stat card — ${matchup.left.name} vs ${matchup.right.name}`,
-            { stage: "battle" }
-          );
+        } else {
+          ssInputs.push({ scene: s, imagePath: lastGoodImage, videoPath: null, startMs: r.startMs, endMs: r.endMs });
         }
-      } catch (e) {
-        log(runId, "warn", `Battle card skipped: ${(e as Error).message.slice(0, 160)}`, {
-          stage: "battle",
-        });
       }
-    }
+      finalPath = await assembleSingleShot(runId, ssInputs, aligned.filePath, runDir);
+    } else {
+      // 2c. Battle data mode — prepend an intro "VS" stat card (per-scene path only).
+      if (channel.battleCard) {
+        try {
+          const matchup = await extractMatchup(runId, script);
+          if (matchup) {
+            const [cw, cardH] = (getSetting("VIDEO_RESOLUTION") || "1920x1080").split("x").map(Number);
+            const cardPng = path.join(runDir, "stat-card.png");
+            const cardAudio = path.join(audioDir, "stat-card.mp3");
+            await renderStatCard(matchup, cardPng, cw, cardH);
+            await makeSilentAudio(cardAudio, CARD_DURATION_SEC);
+            sceneAssets.unshift({
+              scene: { index: -1, text: "", visual_prompt: "", duration_hint_sec: CARD_DURATION_SEC },
+              imagePath: cardPng,
+              videoPath: null,
+              audio: { filePath: cardAudio, durationSec: CARD_DURATION_SEC },
+              staticCard: true,
+            });
+            log(
+              runId,
+              "success",
+              `Battle: added VS stat card — ${matchup.left.name} vs ${matchup.right.name}`,
+              { stage: "battle" }
+            );
+          }
+        } catch (e) {
+          log(runId, "warn", `Battle card skipped: ${(e as Error).message.slice(0, 160)}`, {
+            stage: "battle",
+          });
+        }
+      }
 
-    // 3. Assemble final video
-    const finalPath = await assembleVideo(runId, sceneAssets, runDir);
+      finalPath = await assembleVideo(runId, sceneAssets, runDir);
+    }
 
     // 3b. Auto thumbnails (best-effort). The channel's master prompt + the title
     //     + the whole script go to the LLM, which writes a per-video thumbnail
