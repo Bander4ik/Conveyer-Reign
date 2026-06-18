@@ -13,7 +13,7 @@ import { synthesizeScene } from "./services/tts";
 import { generateImage } from "./services/image-gen";
 import { animateScene, pickScenesToAnimate } from "./services/img2vid";
 import { extractMatchup, renderStatCard, makeSilentAudio, CARD_DURATION_SEC } from "./services/battle-stats";
-import { assembleVideo, extractOrSilentAudio, type AssembleInput } from "./services/video-assemble";
+import { assembleVideo, extractOrSilentAudio, extractLastFrame, type AssembleInput } from "./services/video-assemble";
 import { pexelsPreflight } from "./services/stock-footage";
 import { acquireScoredFootage } from "./services/visual-source";
 import type { TtsResult } from "./services/tts";
@@ -124,6 +124,14 @@ export async function runPipeline(runId: string, script: string) {
         ? pickScenesToAnimate(scenes, channel.clipsRatio, distribution)
         : new Set<number>();
 
+    // Veo's OWN ambient sound mixed UNDER the TTS narration (Reign's request:
+    // keep the voiceover AND the Veo audio together). Only when voiceover is
+    // ON; 0 = disabled (TTS only, the old behavior). Drives both (a) generating
+    // Veo un-muted below and (b) the assembly-time duck+mix.
+    const veoDuckPercent = channel.voiceover
+      ? Math.min(100, Math.max(0, Number(getSetting("VEO_DUCK_PERCENT") || "30")))
+      : 0;
+
     // Real-footage relevance system (multi-source search + Gemini Vision scoring).
     // One run-wide dedup set of namespaced ids ("pexels:123", "wikimedia:Foo"…).
     const usedFootageIds = new Set<string>();
@@ -194,8 +202,24 @@ export async function runPipeline(runId: string, script: string) {
     const shotAnchorIndex = new Map<number, number>();
     const anchorResolve = new Map<number, (u: string | null) => void>();
     const anchorPromise = new Map<number, Promise<string | null>>();
+
+    // Motion continuity: chain consecutive AI-animated clips in a shot so each
+    // clip CONTINUES the previous clip's final frame (the action flows on instead
+    // of restarting). Per animated scene we record its motion-predecessor index,
+    // plus a promise the predecessor resolves with its last frame {url, localPath}.
+    type ChainFrame = { url: string; localPath: string };
+    const motionPredIndex = new Map<number, number>();
+    const frameResolve = new Map<number, (f: ChainFrame | null) => void>();
+    const framePromise = new Map<number, Promise<ChainFrame | null>>();
     if (channel.continuity) {
       const MAX_SHOT_SCENES = 6;
+      // Cap on how many AI clips chain back-to-back. Chained clips MUST generate
+      // sequentially (each continues the previous clip's final frame), so an
+      // unbounded chain would serialize the whole run. 12 ≈ a long continuous
+      // beat before an unavoidable motion reset; a real scene change (new_shot)
+      // resets it sooner. Independent shots still animate in parallel, so total
+      // throughput is unaffected as long as there are several shots in flight.
+      const MAX_CHAIN = 12;
       // Only an AI image can anchor or chain. Stock/real scenes never publish or
       // wait for an anchor frame.
       const usesAiImage = (s: typeof scenes[number]): boolean => {
@@ -208,8 +232,24 @@ export async function runPipeline(runId: string, script: string) {
           (!isClip && !isRealSubject && channel.stillsSource === "ai")
         );
       };
+      // A scene that becomes a MOVING AI clip — only these produce a final frame
+      // a following clip can continue from (stock/real/still scenes don't).
+      const isAnimatedAiClip = (s: typeof scenes[number]): boolean => {
+        const isRealSubject =
+          channel.realSubjects &&
+          (s.visual_type === "real_image" || s.visual_type === "person_overlay");
+        const isClip = !isRealSubject && channel.clipsSource !== "none" && clipTargets.has(s.index);
+        return isClip && channel.clipsSource === "ai";
+      };
       let shotId = -1;
       let since = 0;
+      // The motion chain runs INDEPENDENTLY of the 6-scene image-anchor window:
+      // it breaks only on a real scene change (new_shot), a non-animated scene,
+      // or the MAX_CHAIN safety cap — so the action keeps flowing across a whole
+      // real scene even when that scene spans several anchor windows (Reign:
+      // "cut only when the scene actually changes").
+      let prevAnimatedClip = -1;
+      let chainLen = 0;
       for (const s of scenes) {
         if (shotId < 0 || s.new_shot || since >= MAX_SHOT_SCENES) {
           shotId++;
@@ -224,6 +264,30 @@ export async function runPipeline(runId: string, script: string) {
           }
         }
         shotIdByIndex.set(s.index, shotId);
+        // A real scene change breaks the motion flow (a hard cut is intended).
+        if (s.new_shot) { prevAnimatedClip = -1; chainLen = 0; }
+        if (isAnimatedAiClip(s)) {
+          if (prevAnimatedClip >= 0 && chainLen < MAX_CHAIN) {
+            // Continue the previous clip's motion (link to its last frame).
+            motionPredIndex.set(s.index, prevAnimatedClip);
+            if (!framePromise.has(prevAnimatedClip)) {
+              framePromise.set(
+                prevAnimatedClip,
+                new Promise<ChainFrame | null>((res) => frameResolve.set(prevAnimatedClip, res))
+              );
+            }
+            chainLen++;
+          } else {
+            // Chain head: a fresh generation (first clip after a cut, or the cap
+            // was hit). Its look still matches the shot via the image anchor.
+            chainLen = 1;
+          }
+          prevAnimatedClip = s.index;
+        } else {
+          // A still / stock / real-photo scene interrupts the visible motion.
+          prevAnimatedClip = -1;
+          chainLen = 0;
+        }
         since++;
       }
       log(runId, "info", `Continuity ON — ${shotAnchorIndex.size} shot(s) across ${scenes.length} scenes`, {
@@ -241,6 +305,21 @@ export async function runPipeline(runId: string, script: string) {
         const t = setTimeout(() => resolve(null), 120_000);
         p.then(
           (u) => { clearTimeout(t); resolve(u); },
+          () => { clearTimeout(t); resolve(null); }
+        );
+      });
+    };
+
+    // Motion continuity: a chained clip waits for its predecessor's last frame.
+    // Same 120s cap + timer-clear as awaitAnchor, so a slow/failed predecessor
+    // never hangs the run — the scene just generates a fresh still instead.
+    const awaitFrame = (predIndex: number): Promise<ChainFrame | null> => {
+      const p = framePromise.get(predIndex);
+      if (!p) return Promise.resolve(null);
+      return new Promise<ChainFrame | null>((resolve) => {
+        const t = setTimeout(() => resolve(null), 120_000);
+        p.then(
+          (f) => { clearTimeout(t); resolve(f); },
           () => { clearTimeout(t); resolve(null); }
         );
       });
@@ -267,8 +346,16 @@ export async function runPipeline(runId: string, script: string) {
         const usesAiImage =
           (isClip && channel.clipsSource === "ai") ||
           (!isClip && !isRealSubject && channel.stillsSource === "ai");
+        // Motion continuity: if this clip continues a previous clip, wait for that
+        // clip's LAST frame and animate FROM it (the action flows on). We only
+        // fall back to the still-image anchor reference when NOT chaining motion
+        // (a chained scene skips image generation entirely).
+        let chainFrame: ChainFrame | null = null;
+        if (channel.continuity && motionPredIndex.has(scene.index)) {
+          chainFrame = await awaitFrame(motionPredIndex.get(scene.index)!);
+        }
         let chainRefUrl: string | undefined;
-        if (channel.continuity && usesAiImage && !isAnchor) {
+        if (channel.continuity && usesAiImage && !isAnchor && !chainFrame) {
           chainRefUrl = (await awaitAnchor(shotId)) ?? undefined;
         }
 
@@ -317,21 +404,41 @@ export async function runPipeline(runId: string, script: string) {
               );
               return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
             }
-            // AI clip: AI image → Veo (Ken-Burns fallback on failure).
-            const img = await limitImg(() =>
-              generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects, chainRefUrl)
-            );
+            // AI clip: when CHAINING, animate straight from the previous clip's
+            // last frame — NO new still is generated, so the motion continues
+            // instead of restarting. Otherwise generate a fresh still (look-matched
+            // to the shot anchor) and animate that. Ken-Burns fallback either way.
+            let posterPath: string;
+            let imgJobId: string | undefined;
+            let imgProvider: string;
+            if (chainFrame) {
+              // The predecessor's final frame is BOTH the Veo start (via URL below)
+              // and the local poster / Ken-Burns fallback for this scene.
+              posterPath = chainFrame.localPath;
+              imgProvider = "chain";
+            } else {
+              const img = await limitImg(() =>
+                generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects, chainRefUrl)
+              );
+              posterPath = img.filePath;
+              imgJobId = img.providerJobId;
+              imgProvider = img.provider;
+            }
             let videoPath: string | null = null;
-            if (img.provider !== "wikimedia") {
+            if (imgProvider !== "wikimedia") {
               try {
                 videoPath = await limitAnim(() =>
-                  animateScene(runId, scene, img.filePath, animDir, {
-                    providerJobId: img.providerJobId,
-                    imageProvider: img.provider,
+                  animateScene(runId, scene, posterPath, animDir, {
+                    providerJobId: imgJobId,
+                    imageProvider: imgProvider,
                     motionStyle: channel.animationMotion,
-                    // No voiceover + keep-clip-audio → generate Veo WITH its own
-                    // sound (otherwise the clip is muted and there's nothing to keep).
-                    keepAudio: !channel.voiceover && channel.keepClipAudio,
+                    // Generate Veo WITH its own sound whenever something downstream
+                    // will USE it: (a) no-voiceover + keep-clip-audio (the clip's
+                    // audio IS the track), or (b) voiceover + duck>0 (we mix the
+                    // ambient UNDER the narration). Otherwise mute it.
+                    keepAudio: (!channel.voiceover && channel.keepClipAudio) || veoDuckPercent > 0,
+                    // Motion continuity: animate FROM the previous clip's final frame.
+                    startFrameUrl: chainFrame?.url,
                   })
                 );
               } catch (e) {
@@ -340,7 +447,7 @@ export async function runPipeline(runId: string, script: string) {
                 });
               }
             }
-            return { imagePath: img.filePath, videoPath, jobId: img.providerJobId, provider: img.provider };
+            return { imagePath: posterPath, videoPath, jobId: imgJobId, provider: imgProvider };
           }
 
           // Still scene from real footage: search every source + Gemini Vision
@@ -390,6 +497,28 @@ export async function runPipeline(runId: string, script: string) {
           }
         }
 
+        // Motion continuity: publish THIS clip's LAST frame so the next clip in
+        // the shot continues from it. Only runs when a successor actually awaits
+        // it (frameResolve set in the pre-pass). No clip → resolve null so the
+        // successor falls back to a fresh still instead of waiting out the cap.
+        if (channel.continuity && frameResolve.has(scene.index)) {
+          if (visual.videoPath) {
+            try {
+              const framePng = path.join(animDir, `lastframe_${pad}.png`);
+              await extractLastFrame(visual.videoPath, framePng);
+              const url = await uploadPublicImage(framePng);
+              frameResolve.get(scene.index)?.({ url, localPath: framePng });
+            } catch (e) {
+              log(runId, "warn", `last-frame chain #${scene.index} failed (next clip generates fresh): ${(e as Error).message.slice(0, 140)}`, {
+                stage: "animate",
+              });
+              frameResolve.get(scene.index)?.(null);
+            }
+          } else {
+            frameResolve.get(scene.index)?.(null);
+          }
+        }
+
         // ── Audio ───────────────────────────────────────────────────────────
         let audio: TtsResult;
         if (ttsAudio) {
@@ -418,6 +547,9 @@ export async function runPipeline(runId: string, script: string) {
           imagePath: visual.imagePath,
           videoPath: visual.videoPath,
           audio,
+          // Mix Veo's ambient under the narration at assembly — only when there's
+          // a real moving clip, voiceover is on, and ducking is enabled.
+          mixVeoPercent: visual.videoPath && veoDuckPercent > 0 ? veoDuckPercent : undefined,
           _imgProviderJobId: visual.jobId,
           _imgProvider: visual.provider,
         };
@@ -432,8 +564,10 @@ export async function runPipeline(runId: string, script: string) {
         return null;
       } finally {
         // Safety: never leave the rest of a shot waiting on a failed/non-AI anchor
-        // (resolving twice is a no-op — a real URL set above already won).
+        // or a failed/cancelled predecessor frame (resolving twice is a no-op —
+        // a real value set above already won).
         if (isAnchor) anchorResolve.get(shotId)?.(null);
+        frameResolve.get(scene.index)?.(null);
       }
     };
 

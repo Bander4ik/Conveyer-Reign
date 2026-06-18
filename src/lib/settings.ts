@@ -71,6 +71,7 @@ export const SETTING_KEYS = [
   "ANIMATION_DISTRIBUTION",  // first-half | alternating | random | all
   "ANIMATION_DURATION",      // seconds (provider-dependent)
   "ANIMATION_KEEP_VEO_AUDIO", // "1" to keep Veo's generated ambient audio
+  "VEO_DUCK_PERCENT",        // 0–100: Veo's own ambient sound mixed UNDER the TTS voiceover (0 = off, TTS only)
 
   // ── Video assembly (FFmpeg) ───────────────────────────────────────
   "VIDEO_RESOLUTION",        // e.g. 1920x1080
@@ -239,6 +240,10 @@ export const DEFAULTS: Record<SettingKey, string> = {
   ANIMATION_DISTRIBUTION: "first-half",
   ANIMATION_DURATION: "5",
   ANIMATION_KEEP_VEO_AUDIO: "",
+  // When voiceover is ON, mix Veo's own ambient audio UNDER the narration at
+  // this volume %. 30 = ambient at 30% beneath full-volume TTS. 0 = TTS only
+  // (old behavior). Reign's request: keep the TTS and the Veo sound together.
+  VEO_DUCK_PERCENT: "30",
 
   // Video assembly
   VIDEO_RESOLUTION: "1920x1080",

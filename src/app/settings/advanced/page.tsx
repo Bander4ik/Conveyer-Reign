@@ -188,6 +188,11 @@ const GROUPS: Group[] = [
         desc: "Whether to keep the ambient audio Veo generates inside each clip. Default empty — we mute it so only the TTS narration is heard. Set `1` if you want Veo's atmospheric sound layered behind the narrator.",
         examples: "empty = mute  ·  1 = keep ambient audio",
       },
+      {
+        key: "VEO_DUCK_PERCENT",
+        desc: "When voiceover is ON, mix Veo's own ambient sound UNDERNEATH the narration at this volume %, instead of dropping it. 30 = ambient plays at 30% behind the full-volume narrator (a natural background bed). 0 = off (narration only, the old behavior). Works on both 69labs and kie.",
+        examples: "0–100  ·  default 30  ·  0 = TTS only",
+      },
     ],
   },
   {

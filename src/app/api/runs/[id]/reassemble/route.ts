@@ -94,6 +94,12 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
         return fs.existsSync(mp4) ? mp4 : null;
       }
       const sceneDur = Math.max(2, Number(getSetting("SCENE_DURATION_SECONDS") || "5"));
+      // Same "Veo ambient under the narration" mix as a fresh run (voiceover mode
+      // only). Old runs whose clips were generated muted have no audio stream to
+      // blend — renderAnimatedClip probes and silently falls back to TTS-only.
+      const veoDuckPercent = channel.voiceover
+        ? Math.min(100, Math.max(0, Number(getSetting("VEO_DUCK_PERCENT") || "30")))
+        : 0;
 
       const missingAudio = scenes.filter((s) => !fs.existsSync(audioPath(s.index)));
       // Only regenerate a still when a scene has NEITHER a clip NOR an image — we
@@ -162,6 +168,7 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
           imagePath: img ?? (clip as string),
           videoPath: clip,
           audio: { filePath: ap, durationSec: 1 },
+          mixVeoPercent: clip && veoDuckPercent > 0 ? veoDuckPercent : undefined,
         });
       }
       if (inputs.length === 0) throw new Error("No complete scenes found");

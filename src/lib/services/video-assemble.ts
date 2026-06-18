@@ -15,6 +15,10 @@ export interface AssembleInput {
   audio: TtsResult;
   /** Intro stat card etc. — show the image full-frame, static (no Ken-Burns zoom/pan). */
   staticCard?: boolean;
+  /** When set (1–100) and the Veo clip carries its own audio, mix that ambient
+   *  UNDER the narration at this volume % instead of dropping it. Voiceover mode
+   *  only (set by the pipeline / reassemble from VEO_DUCK_PERCENT). */
+  mixVeoPercent?: number;
 }
 
 /**
@@ -82,7 +86,7 @@ export async function assembleVideo(
           if (item.staticCard) {
             await renderStaticClip(item.imagePath, item.audio.filePath, clipPath, w, h, fps, clipDuration, tailSilence);
           } else if (item.videoPath) {
-            await renderAnimatedClip(item.videoPath, item.audio.filePath, clipPath, w, h, fps, clipDuration, tailSilence);
+            await renderAnimatedClip(item.videoPath, item.audio.filePath, clipPath, w, h, fps, clipDuration, tailSilence, item.mixVeoPercent);
           } else {
             const zoomDirection: "in" | "out" = Math.random() < 0.5 ? "in" : "out";
             await renderKenBurnsClip(item.imagePath, item.audio.filePath, clipPath, w, h, fps, clipDuration, zoomDirection, tailSilence);
@@ -188,6 +192,19 @@ export function probeDuration(filePath: string): Promise<number> {
   });
 }
 
+/** True when the file carries at least one audio stream (ffprobe). Used to
+ *  decide whether Veo's ambient can be mixed under the narration — a muted or
+ *  audio-less clip has nothing to blend, so we skip the mix and avoid an amix
+ *  error on a missing [0:a]. Missing/failing ffprobe → false (safe: TTS only). */
+function hasAudioStream(filePath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    ffmpeg.ffprobe(filePath, (err, data) => {
+      if (err || !data?.streams) return resolve(false);
+      resolve(data.streams.some((s) => s.codec_type === "audio"));
+    });
+  });
+}
+
 /**
  * No-voiceover scenes still need a per-scene audio file so the assembly path
  * (which always expects one) works unchanged. With keepClipAudio + a clip that
@@ -245,6 +262,32 @@ function silentTrack(outPath: string, durationSec: number): Promise<void> {
   // WAV container don't matter.
   writeSilentWav(outPath, Math.max(0.5, durationSec));
   return Promise.resolve();
+}
+
+/**
+ * Grab the LAST frame of a clip as a PNG. Motion continuity feeds this frame to
+ * the NEXT scene's img2vid so the action continues from exactly where the
+ * previous clip ended, instead of restarting. Seeks ~0.2s before EOF and takes
+ * a single frame. Rejects on failure so the caller can fall back to a fresh
+ * image. Runs during scene production (before assembleVideo), so it configures
+ * FFMPEG_PATH itself — same pattern as extractOrSilentAudio.
+ */
+export function extractLastFrame(videoPath: string, outPath: string): Promise<void> {
+  const ffmpegPath = getSetting("FFMPEG_PATH");
+  if (ffmpegPath) {
+    ffmpeg.setFfmpegPath(ffmpegPath);
+    const ffprobePath = ffmpegPath.replace(/ffmpeg(\.exe)?$/i, "ffprobe$1");
+    if (fs.existsSync(ffprobePath)) ffmpeg.setFfprobePath(ffprobePath);
+  }
+  return new Promise((resolve, reject) => {
+    ffmpeg(videoPath)
+      // -sseof seeks relative to EOF; -0.2 = 0.2s before the end → the last frame.
+      .inputOptions(["-sseof", "-0.2"])
+      .outputOptions(["-frames:v", "1", "-q:v", "2", "-update", "1"])
+      .on("error", reject)
+      .on("end", () => resolve())
+      .save(outPath);
+  });
 }
 
 /**
@@ -383,8 +426,10 @@ function renderStaticClip(
  *       via `tpad=stop_mode=clone` for the remaining time. Better than a
  *       jarring restart, and feels like the camera "settling".
  *
- *  Audio comes ONLY from the TTS mp3 (input 1) — Veo's own audio (input 0) is
- *  dropped via explicit -map.
+ *  Audio: by default ONLY the TTS mp3 (input 1) — Veo's own audio (input 0) is
+ *  dropped via explicit -map. When mixVeoPercent > 0 and the clip actually has
+ *  an audio stream, Veo's ambient is instead ducked to that volume % and mixed
+ *  UNDER the narration (Reign's "keep the TTS and the Veo sound together").
  */
 async function renderAnimatedClip(
   videoPath: string,
@@ -394,7 +439,8 @@ async function renderAnimatedClip(
   h: number,
   fps: number,
   durationSec: number,
-  tailSilenceSec: number = 0
+  tailSilenceSec: number = 0,
+  mixVeoPercent: number = 0
 ): Promise<void> {
   const videoDur = await probeDuration(videoPath);
 
@@ -421,16 +467,48 @@ async function renderAnimatedClip(
     }
   }
 
+  // Blend Veo's own ambient UNDER the narration only when asked (voiceover mode
+  // + duck>0) AND the clip really carries an audio stream — otherwise amix would
+  // error on a missing [0:a]. Falls back to the TTS-only path exactly as before.
+  const doMix = mixVeoPercent > 0 && (await hasAudioStream(videoPath));
+
   return new Promise((resolve, reject) => {
-    const cmd = ffmpeg()
-      .input(videoPath)
-      .input(audioPath)
-      .videoFilters(videoFilter);
-    if (tailSilenceSec > 0) {
-      cmd.audioFilters(`apad=pad_dur=${tailSilenceSec.toFixed(3)}`);
-    }
-    cmd
-      .outputOptions([
+    const cmd = ffmpeg().input(videoPath).input(audioPath);
+
+    if (doMix) {
+      const duck = Math.min(1, Math.max(0, mixVeoPercent / 100)).toFixed(3);
+      // normalize=0 keeps our explicit volumes — amix's default divides by the
+      // input count, which would halve the narration. duration=longest so a
+      // short Veo clip's ambient just stops while the narration carries on.
+      const parts = [
+        `[0:v]${videoFilter}[vout]`,
+        `[0:a]volume=${duck}[veoa]`,
+        `[veoa][1:a]amix=inputs=2:duration=longest:normalize=0[amx]`,
+      ];
+      let aout = "amx";
+      if (tailSilenceSec > 0) {
+        parts.push(`[amx]apad=pad_dur=${tailSilenceSec.toFixed(3)}[aout]`);
+        aout = "aout";
+      }
+      cmd.complexFilter(parts).outputOptions([
+        `-map [vout]`,
+        `-map [${aout}]`,
+        `-r ${fps}`,
+        `-t ${durationSec.toFixed(3)}`,
+        "-c:v libx264",
+        "-preset veryfast",
+        "-crf 23",
+        "-pix_fmt yuv420p",
+        "-c:a aac",
+        "-b:a 192k",
+        "-movflags +faststart",
+      ]);
+    } else {
+      cmd.videoFilters(videoFilter);
+      if (tailSilenceSec > 0) {
+        cmd.audioFilters(`apad=pad_dur=${tailSilenceSec.toFixed(3)}`);
+      }
+      cmd.outputOptions([
         // Explicit stream mapping — drops Veo's audio even if `mute` didn't work
         "-map", "0:v:0",
         "-map", "1:a:0",
@@ -443,10 +521,10 @@ async function renderAnimatedClip(
         "-c:a aac",
         "-b:a 192k",
         "-movflags +faststart",
-      ])
-      .on("error", reject)
-      .on("end", () => resolve())
-      .save(outPath);
+      ]);
+    }
+
+    cmd.on("error", reject).on("end", () => resolve()).save(outPath);
   });
 }
 

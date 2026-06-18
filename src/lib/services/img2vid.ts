@@ -21,7 +21,16 @@ export async function animateScene(
   scene: Scene,
   imagePath: string,
   outDir: string,
-  options: { providerJobId?: string; imageProvider?: string; motionStyle?: string; keepAudio?: boolean } = {}
+  options: {
+    providerJobId?: string;
+    imageProvider?: string;
+    motionStyle?: string;
+    keepAudio?: boolean;
+    /** Motion continuity: public URL of the LAST frame of the previous clip in
+     *  this shot. When set, Veo animates FROM this frame so the action flows
+     *  on instead of restarting. Provider-agnostic (69labs imageUrls / kie). */
+    startFrameUrl?: string;
+  } = {}
 ): Promise<string | null> {
   const provider = (getSetting("ANIMATION_PROVIDER") || "off").toLowerCase();
   if (provider === "off") return null;
@@ -35,9 +44,9 @@ export async function animateScene(
   });
 
   if (provider === "69labs") {
-    await labs69Img2Vid(runId, scene, options.providerJobId, options.imageProvider, filePath, options.motionStyle, options.keepAudio);
+    await labs69Img2Vid(runId, scene, options.providerJobId, options.imageProvider, filePath, options.motionStyle, options.keepAudio, options.startFrameUrl);
   } else if (provider === "kie") {
-    await kieImg2Vid(runId, scene, imagePath, filePath, options.motionStyle);
+    await kieImg2Vid(runId, scene, imagePath, filePath, options.motionStyle, options.startFrameUrl);
   } else if (provider === "replicate") {
     await replicateImg2Vid(scene, imagePath, filePath);
   } else if (provider === "fal") {
@@ -60,7 +69,8 @@ async function kieImg2Vid(
   scene: Scene,
   imagePath: string,
   outPath: string,
-  motionStyle?: string
+  motionStyle?: string,
+  startFrameUrl?: string
 ) {
   const model = getSetting("ANIMATION_MODEL") || "";
   const aspectRatio = getSetting("IMAGE_RATIO") || "16:9";
@@ -69,7 +79,10 @@ async function kieImg2Vid(
   const motion = motionStyle ?? getPrompt("animation_motion");
   const prompt = `${scene.visual_prompt}. ${motion}`;
 
-  const imageUrl = await uploadPublicImage(imagePath);
+  // Motion continuity: a start-frame URL (last frame of the previous clip) is
+  // already a public URL — animate straight from it so the motion continues.
+  // Otherwise upload the local image (kie needs a public URL — no jobId chaining).
+  const imageUrl = startFrameUrl ?? (await uploadPublicImage(imagePath));
 
   const MAX_ATTEMPTS = 3;
   let lastErr: unknown;
@@ -103,7 +116,8 @@ async function labs69Img2Vid(
   imageProvider: string | undefined,
   outPath: string,
   motionStyle?: string,
-  keepAudioOverride?: boolean
+  keepAudioOverride?: boolean,
+  startFrameUrl?: string
 ) {
   const model = getSetting("ANIMATION_MODEL") || undefined;
   const aspectRatio = getSetting("IMAGE_RATIO") || undefined;
@@ -118,9 +132,13 @@ async function labs69Img2Vid(
   const motion = motionStyle ?? getPrompt("animation_motion");
   const prompt = `${scene.visual_prompt}. ${motion}`;
 
-  // If the image was generated through 69labs, pass its jobId so the API
-  // reuses the cached image instead of making us re-upload bytes.
-  const usableJobId = imageProvider === "69labs" ? providerJobId : undefined;
+  // Motion continuity: when a start-frame URL is given (the LAST frame of the
+  // previous clip in this shot), animate FROM that exact frame via imageUrls so
+  // the action flows on instead of resetting. Otherwise reuse the just-generated
+  // 69labs image via its jobId (skips a re-upload). createVideoJob prefers
+  // imageJobId, so we null it out when chaining a frame.
+  const usableJobId = !startFrameUrl && imageProvider === "69labs" ? providerJobId : undefined;
+  const startImageUrls = startFrameUrl ? [startFrameUrl] : undefined;
 
   // Veo 3.1 Fast does NOT support custom duration. Only pass it for other models.
   const supportsDuration = model && !/^veo/i.test(model);
@@ -139,6 +157,7 @@ async function labs69Img2Vid(
         aspectRatio,
         duration,
         imageJobId: usableJobId,
+        imageUrls: startImageUrls,
         mute: !keepAudio,
         runId,
       });
@@ -146,7 +165,9 @@ async function labs69Img2Vid(
       log(
         runId,
         "debug",
-        `69labs video job ${jobId.slice(0, 8)}… (img2vid${usableJobId ? ", reusing image" : ", text-only"}, attempt=${attempt})`,
+        `69labs video job ${jobId.slice(0, 8)}… (${
+          startImageUrls ? "continue-from-frame" : usableJobId ? "img2vid, reusing image" : "text-only"
+        }, attempt=${attempt})`,
         { stage: "animate" }
       );
       await pollJob("videos", jobId, runId, "animate");
