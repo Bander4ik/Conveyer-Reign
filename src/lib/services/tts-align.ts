@@ -83,6 +83,14 @@ export async function synthesizeAndAlign(
   );
   const transcript = await transcribeWithGroqWhisper(audioPath);
   log(runId, "info", `Groq Whisper returned ${transcript.length} words`, { stage: "tts_align" });
+  if (transcript.length === 0) {
+    log(
+      runId,
+      "warn",
+      "Whisper returned no words — voiceover may be silent/garbled or in an unexpected language; falling back to proportional scene timing (visuals split by word count) so the video isn't one frozen frame.",
+      { stage: "tts_align" }
+    );
+  }
 
   // 3. Align scene texts to transcript timestamps
   const totalDurationMs = Math.round(durationSec * 1000);
@@ -246,6 +254,26 @@ function alignScenesToTranscript(
     if (!startByScene.has(sw.sceneIdx)) startByScene.set(sw.sceneIdx, tw.startMs);
     endByScene.set(sw.sceneIdx, tw.endMs);
     tCursor = found + 1;
+  }
+
+  // Whisper matched NOTHING (empty/garbled/wrong-language transcript). Without a
+  // single anchor the neighbor-fill + tail passes below would collapse every
+  // scene to a ~0s clip and hold ONE frozen frame over the whole narration. So
+  // split the timeline proportionally by word count instead — every scene gets a
+  // fair, contiguous slice and the video still tracks the audio.
+  if (startByScene.size === 0) {
+    const wc = scenes.map((s) => Math.max(1, (s.text || "").trim().split(/\s+/).length));
+    const totalW = wc.reduce((a, b) => a + b, 0);
+    let cur = 0;
+    return scenes.map((s, k) => {
+      const slice =
+        k === scenes.length - 1
+          ? Math.max(1, totalDurationMs - cur)
+          : Math.round((wc[k] / totalW) * totalDurationMs);
+      const r = { sceneIdx: s.index, startMs: cur, endMs: cur + slice };
+      cur += slice;
+      return r;
+    });
   }
 
   // Raw ranges (may have unaligned scenes marked with -1)

@@ -75,7 +75,11 @@ export async function runPipeline(runId: string, script: string) {
     // "breaths"). FAIL FAST when the key is missing so it's unmistakable the mode
     // needs it — never silently fall back to per-scene while the user assumes
     // single-shot is running.
-    const singleShot = (getSetting("TTS_MODE") || "per-scene").toLowerCase() === "single-shot";
+    // Gated on channel.voiceover: single-shot IS a voiceover mode, so a channel
+    // with voiceover OFF must stay silent — the global TTS_MODE never forces
+    // narration onto a no-voiceover channel.
+    const singleShot =
+      channel.voiceover && (getSetting("TTS_MODE") || "per-scene").toLowerCase() === "single-shot";
     if (singleShot && !getSetting("GROQ_API_KEY").trim()) {
       throw new Error(
         "Single-shot voiceover (TTS_MODE=single-shot) needs GROQ_API_KEY — paste it in Settings (free key at console.groq.com), or set TTS_MODE back to per-scene."
