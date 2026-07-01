@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { getSetting, geminiModel } from "../settings";
 import { log } from "../logger";
+import { assertAiOnly } from "../ai-only";
 import type { Scene } from "./scene-split";
 import {
   searchPexelsVideos,
@@ -509,6 +510,10 @@ export async function acquireScoredFootage(
   opts: ScoredFootageOptions
 ): Promise<ScoredFootage | null> {
   const { runId, want, durSec = 0, videoContext } = opts;
+  // AI-only tripwire: this is the single entry to ALL real-footage providers
+  // (Pexels/Pixabay/Openverse/Wikimedia/Internet Archive). It must be unreachable
+  // under AI-only — fail loud instead of fetching external media.
+  assertAiOnly(`acquireScoredFootage want=${want} scene #${scene.index}`, runId);
   const stage = want === "video" ? "animate" : "image";
   const query = sceneQuery(scene);
   if (!query) {

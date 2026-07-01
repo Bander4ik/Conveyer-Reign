@@ -23,7 +23,8 @@ const BASE = "https://69labs.vip/api/v1";
 const POLL_INTERVAL_MS = 2500;
 // nano-banana-pro 2K can legitimately take 4–5 min. 8 min is enough headroom
 // without keeping zombie polls alive forever.
-const POLL_MAX_MS = 8 * 60 * 1000;
+const POLL_MAX_MS = 8 * 60 * 1000;        // images + TTS stall window
+const VIDEO_POLL_MAX_MS = 4 * 60 * 1000;  // img2vid: give up on a no-progress Veo job sooner (240s)
 
 type JobKind = "tts" | "images" | "videos";
 type JobStatus = "PENDING" | "PROCESSING" | "FINALIZING" | "COMPLETED" | "FAILED" | "CANCELLED" | "CENSORED";
@@ -452,15 +453,48 @@ export async function pollJob(
   // gets re-queued at the back forever and never generates. We only give up when
   // nothing changes for POLL_MAX_MS, with an absolute HARD_CAP as a backstop.
   const HARD_CAP_MS = 30 * 60 * 1000;
+  // Videos that sit with no progress are a saturated Veo queue, and each one
+  // ties up a scarce animation slot — so we give up sooner on videos. Nano
+  // Banana Pro images can legitimately queue much longer, so they (and TTS)
+  // keep the longer window.
+  const stallMaxMs = kind === "videos" ? VIDEO_POLL_MAX_MS : POLL_MAX_MS;
   let lastProgressAt = start;
   let lastStatus: JobStatus | undefined;
   let lastQueuePos: number | undefined;
+  // A transient error on the STATUS endpoint (429 rate-limit / 5xx / network
+  // blip) does NOT mean the job failed — it's still running on 69labs. Keep
+  // polling the SAME job instead of throwing. Throwing here used to make the
+  // outer retry RECREATE the job, which on TTS produced a chain of
+  // DUPLICATE_TTS_IN_PROGRESS 409s (the original job was still alive). Only a
+  // non-transient status (401/403/404) or too many consecutive blips is fatal.
+  class TransientStatusError extends Error {}
+  const MAX_STATUS_ERRS = 15;
+  let statusErrs = 0;
   while (true) {
-    const r = await fetchWithTimeout(`${BASE}/${kind}/status/${jobId}`, { headers: authHeadersFor(key) });
-    if (!r.ok) {
-      throw new Error(`69labs status ${kind}/${jobId} ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    let json: { status: JobStatus; userMessage?: string | null; queuePosition?: number | null };
+    try {
+      const r = await fetchWithTimeout(`${BASE}/${kind}/status/${jobId}`, { headers: authHeadersFor(key) });
+      if (!r.ok) {
+        if (r.status === 429 || (r.status >= 500 && r.status <= 599)) {
+          throw new TransientStatusError(`status ${r.status}`);
+        }
+        throw new Error(`69labs status ${kind}/${jobId} ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`);
+      }
+      json = (await r.json()) as { status: JobStatus; userMessage?: string | null; queuePosition?: number | null };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const transient =
+        e instanceof TransientStatusError ||
+        /network error contacting 69labs|request timed out/.test(msg);
+      if (transient && ++statusErrs <= MAX_STATUS_ERRS) {
+        const backoff = Math.min(30_000, 2500 * statusErrs);
+        log(runId, "warn", `${kind} ${jobId.slice(0, 8)} status poll blip (${msg.slice(0, 60)}) — re-polling in ${Math.round(backoff / 1000)}s (${statusErrs}/${MAX_STATUS_ERRS})`, { stage });
+        await sleep(backoff);
+        continue;
+      }
+      throw e instanceof TransientStatusError ? new Error(`69labs status ${kind}/${jobId} ${msg} (gave up after ${statusErrs} retries)`) : e;
     }
-    const json = (await r.json()) as { status: JobStatus; userMessage?: string | null; queuePosition?: number | null };
+    statusErrs = 0;
     const qp = typeof json.queuePosition === "number" ? json.queuePosition : undefined;
 
     // Progress = a new status OR the queue position moved toward the front.
@@ -485,9 +519,9 @@ export async function pollJob(
         `69labs ${kind} job ${jobId} ${json.status}${json.userMessage ? `: ${json.userMessage}` : ""}`
       );
     }
-    if (Date.now() - lastProgressAt > POLL_MAX_MS) {
+    if (Date.now() - lastProgressAt > stallMaxMs) {
       throw new Error(
-        `69labs ${kind} job ${jobId} stalled — no progress for ${POLL_MAX_MS / 1000}s (status ${json.status}${qp !== undefined ? `, queue ${qp}` : ""}). The model may be overloaded; try a different IMAGE_MODEL.`
+        `69labs ${kind} job ${jobId} stalled — no progress for ${stallMaxMs / 1000}s (status ${json.status}${qp !== undefined ? `, queue ${qp}` : ""}). The model may be overloaded; it will be retried, or try a different model/provider in Settings.`
       );
     }
     if (Date.now() - start > HARD_CAP_MS) {

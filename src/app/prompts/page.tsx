@@ -53,6 +53,20 @@ export default function PromptsPage() {
     setTimeout(() => setSaved(false), 1500);
   }
 
+  async function resetToDefaults() {
+    if (!confirm("Reset ALL prompts to the factory defaults? Your current prompt text will be overwritten.")) return;
+    const r = await fetch("/api/prompts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reset: true }),
+    });
+    const data = (await r.json()) as { prompts?: Record<string, string> };
+    if (data.prompts) setValues(data.prompts);
+    else await load();
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  }
+
   return (
     <div>
       <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>Prompts</h1>
@@ -60,8 +74,9 @@ export default function PromptsPage() {
         These are the system prompts that drive how the LLM splits scripts and what visual style the
         image/video generators produce. Changes take effect on the next run — no restart needed.
       </p>
-      <div style={{ marginBottom: 12 }}>
+      <div style={{ marginBottom: 12, display: "flex", gap: 8, alignItems: "center" }}>
         <button className="btn" onClick={save}>{saved ? "Saved ✓" : "Save all prompts"}</button>
+        <button className="btn btn-ghost" onClick={resetToDefaults}>Reset to defaults</button>
       </div>
       {META.map((m) => (
         <div key={m.name} className="card" style={{ marginBottom: 14 }}>

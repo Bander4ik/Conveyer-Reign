@@ -2,6 +2,7 @@ import fs from "node:fs";
 import ffmpeg from "fluent-ffmpeg";
 import { getSetting } from "../settings";
 import { log } from "../logger";
+import { assertAiOnly } from "../ai-only";
 import { drawtextFont, escDrawtext } from "./fonts";
 
 /**
@@ -64,6 +65,9 @@ export async function tryRealImage(
   outPath: string,
   label: string
 ): Promise<boolean> {
+  // AI-only tripwire: this Wikimedia/real-person gateway must be unreachable
+  // (the scene-split sanitizer forces every scene to "generated"). Fail loud.
+  assertAiOnly(`tryRealImage "${query}"`, runId);
   const hit = await searchWikiImage(query);
   if (!hit) {
     log(runId, "info", `Real image: no Wikipedia image for "${query}" — falling back to AI`, {

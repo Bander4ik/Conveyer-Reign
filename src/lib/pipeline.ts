@@ -5,8 +5,8 @@ import { log } from "./logger";
 import { getSetting } from "./settings";
 import { getRunDir } from "./run-paths";
 import { pLimit } from "./plimit";
-import { splitScript } from "./services/scene-split";
-import { parseCast, prepareCharacterReferences } from "./services/characters";
+import { splitScript, extractStoryBible } from "./services/scene-split";
+import { parseCast, prepareCharacterReferences, type CharacterSpec } from "./services/characters";
 import { uploadPublicImage } from "./services/image-host";
 import { resolveChannel } from "./channels";
 import { synthesizeScene } from "./services/tts";
@@ -48,7 +48,7 @@ export async function runPipeline(runId: string, script: string) {
     //    (generate/upload + host each character's reference image). The cast is
     //    stored in the run's config_json by the create-run API.
     const cfgRow = getConfigStmt.get(runId) as { config_json: string | null } | undefined;
-    const cast = parseCast(cfgRow?.config_json);
+    const manualCast = parseCast(cfgRow?.config_json);
     let channelId: string | null = null;
     try {
       channelId = (JSON.parse(cfgRow?.config_json || "{}") as { channelId?: string }).channelId ?? null;
@@ -64,12 +64,6 @@ export async function runPipeline(runId: string, script: string) {
         { stage: "pipeline" }
       );
     }
-    if (cast.length > 0) {
-      log(runId, "info", `Cast: ${cast.map((c) => c.name + (c.isHost ? " (host)" : "")).join(", ")}`, {
-        stage: "character",
-      });
-    }
-
     // Single-shot voiceover mode: ONE continuous narration for the whole script,
     // word-aligned to scene boundaries via Groq Whisper (fluid, no per-scene
     // "breaths"). FAIL FAST when the key is missing so it's unmistakable the mode
@@ -90,6 +84,35 @@ export async function runPipeline(runId: string, script: string) {
         stage: "pipeline",
       });
     }
+    // Continuity auto-cast + shared world: extract a "story bible" from the
+    // script (one LLM call). When the user defined NO characters manually, the
+    // recurring subjects it finds (e.g. the two battling animals) become the
+    // cast — so they get a locked reference image and stay identical across the
+    // whole video, reusing the existing character pipeline. The world block is
+    // appended to every image prompt so the environment/lighting stays constant.
+    // Best-effort: an empty bible just means no auto-cast / no world block.
+    const bible = channel.continuity ? await extractStoryBible(runId, script) : { world: "", subjects: [] };
+    const autoCast: CharacterSpec[] = bible.subjects.map((s, i) => ({
+      id: `auto${i}`,
+      name: s.name,
+      source: "describe" as const,
+      description: s.description,
+      isHost: false,
+    }));
+    // Manual cast always wins; auto-cast only fills in when the user gave none.
+    const cast: CharacterSpec[] = manualCast.length > 0 ? manualCast : autoCast;
+    const worldStyle = bible.world.trim() || undefined;
+    if (cast.length > 0) {
+      log(
+        runId,
+        "info",
+        `Cast: ${cast.map((c) => c.name + (c.isHost ? " (host)" : "")).join(", ")}${
+          manualCast.length === 0 && autoCast.length > 0 ? " (auto from script)" : ""
+        }`,
+        { stage: "character" }
+      );
+    }
+
     const [scenes, characterRefs] = await Promise.all([
       splitScript(runId, script, cast, channel.sceneSplit, channel.continuity),
       prepareCharacterReferences(runId, cast, charDir, channel.imageStyle).catch((e) => {
@@ -224,6 +247,14 @@ export async function runPipeline(runId: string, script: string) {
     const shotAnchorIndex = new Map<number, number>();
     const anchorResolve = new Map<number, (u: string | null) => void>();
     const anchorPromise = new Map<number, Promise<string | null>>();
+    // Cross-shot carry-over: the URL of the MOST RECENTLY published shot anchor.
+    // A new shot's anchor uses it as a soft reference so the look (and the locked
+    // subjects) carries across the CUT, not just within a shot. Best-effort and
+    // non-blocking — just a hint read at generation time, so it never adds a
+    // promise that could hang the worker pool. Subject identity is still
+    // guaranteed by the per-scene character references; this mainly steadies the
+    // environment/lighting across shot boundaries.
+    let lastAnchorUrl: string | null = null;
 
     // Motion continuity: chain consecutive AI-animated clips in a shot so each
     // clip CONTINUES the previous clip's final frame (the action flows on instead
@@ -379,6 +410,10 @@ export async function runPipeline(runId: string, script: string) {
         let chainRefUrl: string | undefined;
         if (channel.continuity && usesAiImage && !isAnchor && !chainFrame) {
           chainRefUrl = (await awaitAnchor(shotId)) ?? undefined;
+        } else if (channel.continuity && usesAiImage && isAnchor && !chainFrame && lastAnchorUrl) {
+          // Cross-shot carry-over: a new shot's anchor matches the previous shot's
+          // anchor so the look continues across the cut. Non-blocking hint.
+          chainRefUrl = lastAnchorUrl;
         }
 
         // ── Produce the visual ──────────────────────────────────────────────
@@ -390,7 +425,7 @@ export async function runPipeline(runId: string, script: string) {
         }> => {
           if (isRealSubject) {
             const img = await limitImg(() =>
-              generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, true)
+              generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, true, undefined, worldStyle)
             );
             return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
           }
@@ -422,7 +457,7 @@ export async function runPipeline(runId: string, script: string) {
                 stage: "animate",
               });
               const img = await limitImg(() =>
-                generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects)
+                generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects, undefined, worldStyle)
               );
               return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
             }
@@ -440,7 +475,7 @@ export async function runPipeline(runId: string, script: string) {
               imgProvider = "chain";
             } else {
               const img = await limitImg(() =>
-                generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects, chainRefUrl)
+                generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects, chainRefUrl, worldStyle)
               );
               posterPath = img.filePath;
               imgJobId = img.providerJobId;
@@ -488,12 +523,12 @@ export async function runPipeline(runId: string, script: string) {
               stage: "image",
             });
             const img = await limitImg(() =>
-              generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects)
+              generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects, undefined, worldStyle)
             );
             return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
           }
           const img = await limitImg(() =>
-            generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects, chainRefUrl)
+            generateImage(runId, scene, imgDir, characterRefs, channel.imageStyle, channel.realSubjects, chainRefUrl, worldStyle)
           );
           return { imagePath: img.filePath, videoPath: null, jobId: img.providerJobId, provider: img.provider };
         };
@@ -513,7 +548,10 @@ export async function runPipeline(runId: string, script: string) {
         // can match it (upload to a public URL the image model can fetch).
         if (isAnchor && channel.continuity && usesAiImage && visual.imagePath) {
           try {
-            anchorResolve.get(shotId)?.(await uploadPublicImage(visual.imagePath));
+            const url = await uploadPublicImage(visual.imagePath);
+            // Carry this anchor across the next shot cut (best-effort hint).
+            lastAnchorUrl = url;
+            anchorResolve.get(shotId)?.(url);
           } catch {
             anchorResolve.get(shotId)?.(null);
           }

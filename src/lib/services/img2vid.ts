@@ -7,6 +7,7 @@ import type { Scene } from "./scene-split";
 import { createVideoJob, pollJob, downloadJob, cancelJob, releaseJob } from "./labs69";
 import { createKieVeoTask, pollKieVeo, downloadKieFile } from "./kie";
 import { uploadPublicImage } from "./image-host";
+import { cameraMoveClause } from "./shot-grammar";
 
 /**
  * Turns a still image into a short ~5-second video clip.
@@ -76,7 +77,10 @@ async function kieImg2Vid(
   const aspectRatio = getSetting("IMAGE_RATIO") || "16:9";
   const durationSec = Number(getSetting("ANIMATION_DURATION") || "") || undefined;
 
-  const motion = motionStyle ?? getPrompt("animation_motion");
+  // Per-scene camera move (shot grammar) replaces the single global motion clause
+  // that forced every clip to "stay centered, do NOT pan/zoom"; falls back to that
+  // global string verbatim when the scene has no camera_move (shot grammar off).
+  const motion = cameraMoveClause(scene.camera_move, motionStyle ?? getPrompt("animation_motion"));
   const prompt = `${scene.visual_prompt}. ${motion}`;
 
   // Motion continuity: a start-frame URL (last frame of the previous clip) is
@@ -127,9 +131,11 @@ async function labs69Img2Vid(
   // Without this, a no-voiceover channel got a muted clip → nothing to "keep".
   const keepAudio = keepAudioOverride ?? (getSetting("ANIMATION_KEEP_VEO_AUDIO") === "1");
 
-  // Live-photo style: per-scene visual prompt + motion-style suffix
-  // (channel override when set, otherwise the global /prompts value).
-  const motion = motionStyle ?? getPrompt("animation_motion");
+  // Live-photo style: per-scene visual prompt + motion clause. Shot grammar's
+  // per-scene camera move (push-in / track / …) replaces the single global motion
+  // string; falls back to the channel/global value verbatim when camera_move is
+  // unset (shot grammar off).
+  const motion = cameraMoveClause(scene.camera_move, motionStyle ?? getPrompt("animation_motion"));
   const prompt = `${scene.visual_prompt}. ${motion}`;
 
   // Motion continuity: when a start-frame URL is given (the LAST frame of the

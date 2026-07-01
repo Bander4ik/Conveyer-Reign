@@ -27,6 +27,16 @@ export const SETTING_KEYS = [
   "SCENE_SPLIT_PROVIDER",    // google | anthropic
   "SCENE_SPLIT_MODEL",       // e.g. gemini-flash-latest, claude-sonnet-4-6
 
+  // ── Beat normalizer (deterministic Veo-safe scene sizing) ─────────
+  "BEAT_NORMALIZER",         // "1" on (default) | "0" off — re-size LLM scenes deterministically so no beat exceeds Veo's motion ceiling
+  "BEAT_TARGET_SEC",         // target beat length in seconds (~fills one Veo clip)
+  "BEAT_MIN_SEC",            // runts shorter than this fold into the previous same-shot beat
+  "BEAT_MAX_SEC",            // hard cap — scenes longer than this are subdivided into chained sub-beats
+  "NARRATION_WORDS_PER_SEC", // measured narration rate used to estimate beat seconds (≈ 2.63)
+
+  // ── Shot grammar (documentary shot design) ────────────────────────
+  "SHOT_GRAMMAR",            // "1" on (default) | "0" off — per-scene shot_type/camera_move/emphasis vs the old single global look
+
   // ── Text-to-Speech ────────────────────────────────────────────────
   "TTS_MODE",                // per-scene (default) | single-shot (one continuous voiceover + Whisper word-alignment; needs GROQ_API_KEY)
   "TTS_PROVIDER",            // 69labs | kie | elevenlabs | openai
@@ -52,6 +62,15 @@ export const SETTING_KEYS = [
   "IMAGE_MODEL",             // e.g. nano-banana-pro, imagen-4, seedream-4.5
   "IMAGE_RATIO",             // e.g. 16:9, 9:16, 1:1
   "IMAGE_RESOLUTION",        // 1k | 2k | 4k (for models that support it)
+
+  // ── Vision QC gate (verify the generated frame: subject correctness + cinema) ──
+  "IMAGE_QC",                // "1" on (default) | "0" off — Gemini-vision two-axis check + regen on a hard subject miss
+  "IMAGE_QC_SUBJECT_FLOOR",  // 0-100 HARD floor on subjectScore (default 55); below = always regenerate (wrong species)
+  "IMAGE_QC_CINEMA",         // "log" (default, observe cinemaScore only) | "weighted" (enforce finalScore gate)
+  "IMAGE_QC_THRESHOLD",      // 0-100 accept bar on finalScore — only gates in CINEMA=weighted mode (default 60)
+  "IMAGE_QC_W_SUBJECT",      // weight of subjectScore in finalScore (default 0.65)
+  "IMAGE_QC_W_CINEMA",       // weight of cinemaScore in finalScore (default 0.35)
+  "IMAGE_QC_MAX_REGEN",      // max regenerations per image on QC failure (default 1)
 
   // ── Real footage (multi-source + Gemini Vision relevance scoring) ──
   "STOCK_FOOTAGE_ORIENTATION",  // landscape | portrait | square
@@ -81,6 +100,7 @@ export const SETTING_KEYS = [
   "SCENE_DURATION_SECONDS",  // fallback duration when TTS length is unknown
   "TRANSITION_DURATION",     // crossfade between scenes in seconds (0 = none)
   "SCENE_TAIL_SILENCE",      // silence appended to each clip's audio (seconds), creates breathing room between scenes
+  "MIN_ANIMATED_CLIP_SECONDS", // minimum on-screen length for an img2vid (Veo) clip — keeps short narration from trimming the motion to 1-2s
 
   // ── Performance / Concurrency ─────────────────────────────────────
   "IMAGE_CONCURRENCY",       // parallel image jobs
@@ -89,6 +109,8 @@ export const SETTING_KEYS = [
   "ASSEMBLE_CONCURRENCY",    // parallel FFmpeg clip renders
   "ASSEMBLE_XFADE_CHUNKS",            // 1 = monolithic xfade (legacy); anything else = hierarchical
   "ASSEMBLE_XFADE_MAX_CLIPS_PER_PASS", // hard cap on inputs per ffmpeg xfade call (default 50)
+  "ASSEMBLE_FFMPEG_STALL_MS",         // kill an ffmpeg render that makes NO progress for this long (anti-hang; default 120000)
+  "FFPROBE_TIMEOUT_MS",               // fall back to a size estimate if ffprobe doesn't answer in this long (anti-hang; default 30000)
 
   // ── Google Drive sync ─────────────────────────────────────────────
   // OAuth2 credentials from Google Cloud Console (Web Application client).
@@ -106,6 +128,9 @@ export const SETTING_KEYS = [
   "GDRIVE_CLIPS_LIBRARY_FOLDER_ID",
   // Master switch. Empty/"0" = disabled (don't upload). "1" = upload after every run.
   "GDRIVE_SYNC_ENABLED",
+  // Internal one-time-migration flag (not user-facing): "1" once the legacy
+  // space prompts have been migrated to the wildlife defaults. See init.ts.
+  "PROMPTS_ANIMAL_MIGRATION_DONE",
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];
@@ -195,6 +220,22 @@ export const DEFAULTS: Record<SettingKey, string> = {
   SCENE_SPLIT_PROVIDER: "google",
   SCENE_SPLIT_MODEL: "gemini-flash-latest",
 
+  // Beat normalizer — deterministic, timing-driven sizing on top of the LLM
+  // split so no beat runs past Veo's ~8 s of motion (no frozen tails) and runts
+  // don't slideshow. Estimate-driven (NARRATION_WORDS_PER_SEC); long scenes
+  // become chained sub-beats stitched by motion-chaining. Set "0" to disable.
+  BEAT_NORMALIZER: "1",
+  BEAT_TARGET_SEC: "7",
+  BEAT_MIN_SEC: "3.5",
+  BEAT_MAX_SEC: "8",
+  NARRATION_WORDS_PER_SEC: "2.63",
+
+  // Shot grammar — per-scene framing (shot_type), motion (camera_move) and
+  // editorial intent (emphasis), tagged by the LLM in scene-split and completed
+  // by a deterministic variety pass. Replaces the single global image/motion
+  // strings that made every clip look the same. Set "0" to A/B the old look.
+  SHOT_GRAMMAR: "1",
+
   // TTS — runs through 69labs; ElevenLabs is the high-quality voice family and
   // the intended default (the voice fine-tuning below is all ElevenLabs-specific).
   // Edge TTS (free Microsoft voices) and voice-clone are the alternatives,
@@ -227,6 +268,24 @@ export const DEFAULTS: Record<SettingKey, string> = {
   IMAGE_RATIO: "16:9",
   IMAGE_RESOLUTION: "1k",
 
+  // Vision QC gate — verify each AI frame shows the intended subject (catch
+  // "leopard cub → bear"), regenerate once on a hard miss, keep the best frame.
+  // Cheap flash vision call; real cost is the (budgeted) regenerations.
+  IMAGE_QC: "1",
+  // Subject correctness is a HARD floor (wrong species can never pass). 55 starts
+  // slightly inside the lenient-scorer gray zone to catch borderline-wrong frames
+  // without over-regenerating during calibration; recalibrate from logged scores.
+  IMAGE_QC_SUBJECT_FLOOR: "55",
+  // "log" = observe cinemaScore only (collect distributions, gate on subject floor
+  // alone); flip to "weighted" later to enforce finalScore.
+  IMAGE_QC_CINEMA: "log",
+  // finalScore accept bar — only active in weighted mode.
+  IMAGE_QC_THRESHOLD: "60",
+  // finalScore = W_SUBJECT*subjectScore + W_CINEMA*cinemaScore.
+  IMAGE_QC_W_SUBJECT: "0.65",
+  IMAGE_QC_W_CINEMA: "0.35",
+  IMAGE_QC_MAX_REGEN: "1",
+
   // Real footage (multi-source + Gemini Vision relevance scoring)
   STOCK_FOOTAGE_ORIENTATION: "landscape",
   STOCK_FOOTAGE_MAX_HEIGHT: "1080",
@@ -258,6 +317,7 @@ export const DEFAULTS: Record<SettingKey, string> = {
   SCENE_DURATION_SECONDS: "5",
   TRANSITION_DURATION: "0.5",
   SCENE_TAIL_SILENCE: "0.4",
+  MIN_ANIMATED_CLIP_SECONDS: "4.5",
 
   // Performance
   IMAGE_CONCURRENCY: "5",
@@ -266,6 +326,13 @@ export const DEFAULTS: Record<SettingKey, string> = {
   ASSEMBLE_CONCURRENCY: "4",
   ASSEMBLE_XFADE_CHUNKS: "4",
   ASSEMBLE_XFADE_MAX_CLIPS_PER_PASS: "50",
+  // Anti-hang: ffmpeg/ffprobe calls used to have NO timeout, so a single blocked
+  // child (malformed clip, pipe stall, lost completion event) hung the whole
+  // assembly forever. A render that emits no progress for STALL_MS is killed and
+  // the clip is skipped; an ffprobe that doesn't answer in FFPROBE_TIMEOUT_MS
+  // falls back to a size-based estimate.
+  ASSEMBLE_FFMPEG_STALL_MS: "120000",
+  FFPROBE_TIMEOUT_MS: "30000",
 
   // Google Drive — all empty by default. User fills client_id/secret;
   // OAuth flow fills refresh_token + email; folders auto-create on first sync.
@@ -276,6 +343,9 @@ export const DEFAULTS: Record<SettingKey, string> = {
   GDRIVE_FINAL_VIDEOS_FOLDER_ID: "",
   GDRIVE_CLIPS_LIBRARY_FOLDER_ID: "",
   GDRIVE_SYNC_ENABLED: "",
+  // Internal one-time-migration flag — empty until the legacy-space-prompt
+  // migration has run (see init.ts). Not surfaced in the UI.
+  PROMPTS_ANIMAL_MIGRATION_DONE: "",
 };
 
 /** Write defaults for any keys that aren't already in the DB. */

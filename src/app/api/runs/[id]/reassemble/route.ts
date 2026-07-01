@@ -8,7 +8,7 @@ import { assembleVideo, extractOrSilentAudio, type AssembleInput } from "@/lib/s
 import { synthesizeScene } from "@/lib/services/tts";
 import { writeSilentWav } from "@/lib/services/media-synth";
 import { generateImage } from "@/lib/services/image-gen";
-import { splitScript, type Scene } from "@/lib/services/scene-split";
+import { splitScript, sanitizeAiOnlyScenes, type Scene } from "@/lib/services/scene-split";
 import { getRunDir } from "@/lib/run-paths";
 import { pLimit } from "@/lib/plimit";
 import { getSetting } from "@/lib/settings";
@@ -70,6 +70,11 @@ export async function POST(_: Request, ctx: { params: Promise<{ id: string }> })
         scenes = await splitScript(id, row.script, [], channel.sceneSplit, channel.continuity);
         fs.writeFileSync(scenesFile, JSON.stringify(scenes, null, 2), "utf-8");
       }
+      // AI-only Layer 1 must run on EVERY scene source. The re-split branch is
+      // already sanitized inside splitScript, but a cached scenes.json from an
+      // OLDER run can still carry visual_type:"real_image" — sanitize (idempotent)
+      // so reassemble can never route to real media and old scenes regenerate as AI.
+      sanitizeAiOnlyScenes(scenes, id);
 
       // 2. Find gaps. A scene's visual can be a clip (animations/*.mp4) OR a still
       //    (AI .png / Pexels .jpg). Audio depends on the channel's mode: voiceover

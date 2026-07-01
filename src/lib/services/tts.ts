@@ -3,7 +3,7 @@ import path from "node:path";
 import { getSetting } from "../settings";
 import { log } from "../logger";
 import type { Scene } from "./scene-split";
-import { createTtsJob, pollJob, downloadJob } from "./labs69";
+import { createTtsJob, pollJob, downloadJob, cancelJob, releaseJob } from "./labs69";
 import { createKieTask, pollKieTask, downloadKieFile } from "./kie";
 import ffmpeg from "fluent-ffmpeg";
 
@@ -197,7 +197,7 @@ async function labs69Tts(runId: string, text: string, outPath: string, voiceOver
   const autoPauseDuration = parseFloatOr(getSetting("TTS_PAUSE_DURATION"), NaN);
   const autoPauseFrequency = parseFloatOr(getSetting("TTS_PAUSE_FREQUENCY"), NaN);
 
-  const jobId = await createTtsJob({
+  const jobOpts = {
     text,
     voiceId,
     voiceProvider,
@@ -208,10 +208,45 @@ async function labs69Tts(runId: string, text: string, outPath: string, voiceOver
     autoPauseDuration: !Number.isNaN(autoPauseDuration) ? clamp(autoPauseDuration, 0.1, 30) : undefined,
     autoPauseFrequency: !Number.isNaN(autoPauseFrequency) ? clamp(autoPauseFrequency, 1, 100) : undefined,
     runId,
-  });
-  log(runId, "debug", `69labs TTS job ${jobId.slice(0, 8)}… (${voiceProvider}/${voiceId}, speed=${voiceSettings.speed ?? "default"}, pause=${autoPauseEnabled ? `${autoPauseDuration}s` : "off"})`, { stage: "tts" });
-  await pollJob("tts", jobId, runId, "tts");
-  await downloadJob("tts", jobId, outPath);
+  };
+
+  // Retry with cancel-on-stall — same pattern as labs69Image / labs69Img2Vid.
+  // Without this, a single transient 69labs/ElevenLabs blip (a 480s stall or a
+  // 500) killed the scene outright with NO retry, and the stalled job stayed
+  // "in progress" so a later resubmission hit DUPLICATE_TTS_IN_PROGRESS. On a
+  // stall we cancel first (frees the key slot AND clears the remote job so the
+  // retry isn't a duplicate); on other errors we just release the slot.
+  const MAX_ATTEMPTS = 3;
+  let lastErr: unknown;
+  let lastJobId: string | null = null;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const jobId = await createTtsJob(jobOpts);
+      lastJobId = jobId;
+      log(runId, "debug", `69labs TTS job ${jobId.slice(0, 8)}… (${voiceProvider}/${voiceId}, speed=${voiceSettings.speed ?? "default"}, pause=${autoPauseEnabled ? `${autoPauseDuration}s` : "off"}, attempt=${attempt})`, { stage: "tts" });
+      await pollJob("tts", jobId, runId, "tts");
+      await downloadJob("tts", jobId, outPath);
+      return;
+    } catch (e) {
+      lastErr = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      if (lastJobId) {
+        if (/stalled|hard cap|timed out|timeout/i.test(msg)) {
+          const cancelled = await cancelJob("tts", lastJobId);
+          log(runId, "debug", `Cancelled TTS ${lastJobId.slice(0, 8)} → ${cancelled ? "ok" : "skipped"}`, { stage: "tts" });
+        } else {
+          releaseJob(lastJobId);
+        }
+      }
+      if (attempt < MAX_ATTEMPTS) {
+        const delay = 5000 * attempt;
+        log(runId, "warn", `tts attempt ${attempt}/${MAX_ATTEMPTS} failed: ${msg.slice(0, 200)} — retry in ${delay}ms`, { stage: "tts" });
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 /** kie.ai TTS — ElevenLabs multilingual-v2 through kie's Jobs API. Uses the

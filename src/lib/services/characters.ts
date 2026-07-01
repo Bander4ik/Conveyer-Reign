@@ -1,10 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getSetting } from "../settings";
 import { getPrompt } from "../prompts";
 import { log } from "../logger";
-import { createImageJob, pollJob, downloadJob, releaseJob } from "./labs69";
-import { createKieTask, pollKieTask, downloadKieFile, kieImageModel, kieResolution } from "./kie";
+import { pLimit } from "../plimit";
 import { uploadPublicImage } from "./image-host";
 
 /** Max reference images passed to the image model for a single scene. */
@@ -72,44 +70,56 @@ export async function prepareCharacterReferences(
   fs.mkdirSync(charDir, { recursive: true });
 
   const refs: Record<string, string> = {};
-  for (const ch of cast) {
-    try {
-      // 1. Use a directly-provided public URL as-is.
-      if (ch.source === "url" && ch.imageUrl?.trim()) {
-        refs[ch.name] = ch.imageUrl.trim();
-        log(runId, "success", `Character "${ch.name}" → using provided image URL`, {
-          stage: "character",
-        });
-        continue;
-      }
+  // Resolve the cast CONCURRENTLY. Portrait generation is the slowest upfront
+  // step (each nano-banana-pro portrait is provider-slow) and it blocks all
+  // scene work, so running the cast in parallel collapses N sequential portrait
+  // waits into roughly one. Bound the fan-out so a large manual cast can't exceed
+  // 69labs' ~7-image/key ceiling; for the typical auto-cast (≤4) this is
+  // effectively full parallel. Per-character failures stay isolated (caught
+  // below) so one bad portrait never aborts the others or the run.
+  const limit = pLimit(Math.min(Math.max(cast.length, 1), 4));
+  await Promise.all(
+    cast.map((ch) =>
+      limit(async () => {
+        try {
+          // 1. Use a directly-provided public URL as-is.
+          if (ch.source === "url" && ch.imageUrl?.trim()) {
+            refs[ch.name] = ch.imageUrl.trim();
+            log(runId, "success", `Character "${ch.name}" → using provided image URL`, {
+              stage: "character",
+            });
+            return;
+          }
 
-      // 2. Otherwise resolve to a local image: an uploaded file, or a freshly
-      //    generated portrait from the description.
-      let localPath: string | undefined;
-      if (ch.source === "upload" && ch.inputImagePath && fs.existsSync(ch.inputImagePath)) {
-        localPath = ch.inputImagePath;
-      } else {
-        const desc = ch.description?.trim() || ch.name;
-        localPath = await generatePortrait(runId, ch, desc, charDir, imageStyle);
-      }
-      if (!localPath) throw new Error("no reference image produced");
+          // 2. Otherwise resolve to a local image: an uploaded file, or a freshly
+          //    generated portrait from the description.
+          let localPath: string | undefined;
+          if (ch.source === "upload" && ch.inputImagePath && fs.existsSync(ch.inputImagePath)) {
+            localPath = ch.inputImagePath;
+          } else {
+            const desc = ch.description?.trim() || ch.name;
+            localPath = await generatePortrait(runId, ch, desc, charDir, imageStyle);
+          }
+          if (!localPath) throw new Error("no reference image produced");
 
-      // 3. Host it so 69labs can fetch it.
-      const url = await uploadPublicImage(localPath);
-      refs[ch.name] = url;
-      log(runId, "success", `Character "${ch.name}" reference ready`, {
-        stage: "character",
-        data: { url },
-      });
-    } catch (e) {
-      log(
-        runId,
-        "warn",
-        `Character "${ch.name}" reference failed: ${(e as Error).message.slice(0, 160)} — its scenes won't be locked to a consistent look`,
-        { stage: "character" }
-      );
-    }
-  }
+          // 3. Host it so 69labs can fetch it.
+          const url = await uploadPublicImage(localPath);
+          refs[ch.name] = url;
+          log(runId, "success", `Character "${ch.name}" reference ready`, {
+            stage: "character",
+            data: { url },
+          });
+        } catch (e) {
+          log(
+            runId,
+            "warn",
+            `Character "${ch.name}" reference failed: ${(e as Error).message.slice(0, 160)} — its scenes won't be locked to a consistent look`,
+            { stage: "character" }
+          );
+        }
+      })
+    )
+  );
   return refs;
 }
 
@@ -121,8 +131,6 @@ async function generatePortrait(
   charDir: string,
   imageStyle?: string
 ): Promise<string> {
-  const model = getSetting("IMAGE_MODEL") || undefined;
-  const resolution = getSetting("IMAGE_RESOLUTION") || undefined;
   const styleSuffix = imageStyle ?? getPrompt("image_prompt");
   const prompt =
     `Character reference portrait of ${ch.name}: ${desc}. ` +
@@ -131,33 +139,15 @@ async function generatePortrait(
   const outPath = path.join(charDir, `${safeId(ch.id)}_ref.png`);
 
   log(runId, "info", `Generating reference portrait for "${ch.name}"`, { stage: "character" });
-  const provider = (getSetting("IMAGE_PROVIDER") || "69labs").toLowerCase();
-  if (provider === "kie") {
-    const input: Record<string, unknown> = { prompt, output_format: "png", aspect_ratio: "3:4" };
-    const res = kieResolution(resolution || "");
-    if (res) input.resolution = res;
-    const taskId = await createKieTask(kieImageModel(model || ""), input, { runId, stage: "character" });
-    const urls = await pollKieTask(taskId, runId, "character");
-    await downloadKieFile(urls[0], outPath);
-    return outPath;
-  }
-  if (provider !== "69labs") {
-    // replicate / openai / fal don't support the 69labs jobId path. Dispatch via
-    // generateImageToPath so the portrait uses the SELECTED provider instead of
-    // silently hitting 69labs (which threw a misleading "LABS69_API_KEY not set").
-    // Lazy import avoids a static import cycle with image-gen.
-    const { generateImageToPath } = await import("./image-gen");
-    await generateImageToPath(runId, prompt, outPath);
-    return outPath;
-  }
-  const jobId = await createImageJob({ prompt, model, aspectRatio: "3:4", resolution, runId });
-  try {
-    await pollJob("images", jobId, runId, "character");
-    await downloadJob("images", jobId, outPath); // releases the key slot
-  } catch (e) {
-    releaseJob(jobId);
-    throw e;
-  }
+  // Route through the SHARED, hardened image path so portraits inherit the same
+  // 3-attempt retry + cancel-on-stall + content-moderation rescue as scene
+  // images. Previously this called pollJob directly with no retry, so a single
+  // stalled portrait blocked the whole (sequential, upfront) character step for
+  // ~8 minutes. The 3:4 override keeps the portrait framing for the providers
+  // that honor it (69labs/kie); replicate/openai/fal use IMAGE_RATIO as before.
+  // Lazy import avoids a static import cycle with image-gen.
+  const { generateImageToPath } = await import("./image-gen");
+  await generateImageToPath(runId, prompt, outPath, { aspectRatio: "3:4" });
   return outPath;
 }
 

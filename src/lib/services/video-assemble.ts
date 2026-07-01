@@ -82,14 +82,35 @@ export async function assembleVideo(
           const audioDuration = await probeDuration(item.audio.filePath);
           // Total clip duration = audio + silence padding at the end so consecutive
           // scenes get a natural breath between them after concat.
-          const clipDuration = audioDuration + tailSilence;
+          let clipDuration = audioDuration + tailSilence;
+          // Issue #2: a real Veo clip carries ~5-8s of motion, but short narration
+          // (~1s) used to trim it to ~1.4s — you'd see only the first beat. Give
+          // img2vid clips a minimum on-screen length so the motion plays out. We
+          // never extend PAST the real footage (that would freeze-pad), and audio
+          // is padded with trailing silence in renderAnimatedClip. Stills/Ken-Burns
+          // are unaffected (this targets actual Veo clips only).
+          if (item.videoPath && !item.staticCard) {
+            const minAnim = Math.max(0, Number(getSetting("MIN_ANIMATED_CLIP_SECONDS") || "4.5"));
+            if (clipDuration < minAnim) {
+              const videoDur = await probeDuration(item.videoPath);
+              clipDuration = Math.min(Math.max(clipDuration, minAnim), Math.max(clipDuration, videoDur));
+            }
+          }
+          // Per-substep trace: which render path + the durations feeding it, so a
+          // stalled clip is pinpointed to its exact branch in the log.
+          log(
+            runId,
+            "debug",
+            `Clip #${item.scene.index} render start: ${item.staticCard ? "static" : item.videoPath ? "img2vid" : "ken-burns"} · audio ${audioDuration.toFixed(2)}s · clip ${clipDuration.toFixed(2)}s`,
+            { stage: "assemble" }
+          );
           if (item.staticCard) {
-            await renderStaticClip(item.imagePath, item.audio.filePath, clipPath, w, h, fps, clipDuration, tailSilence);
+            await renderStaticClip(runId, item.imagePath, item.audio.filePath, clipPath, w, h, fps, clipDuration, tailSilence);
           } else if (item.videoPath) {
-            await renderAnimatedClip(item.videoPath, item.audio.filePath, clipPath, w, h, fps, clipDuration, tailSilence, item.mixVeoPercent);
+            await renderAnimatedClip(runId, item.videoPath, item.audio.filePath, clipPath, w, h, fps, clipDuration, tailSilence, item.mixVeoPercent);
           } else {
             const zoomDirection: "in" | "out" = Math.random() < 0.5 ? "in" : "out";
-            await renderKenBurnsClip(item.imagePath, item.audio.filePath, clipPath, w, h, fps, clipDuration, zoomDirection, tailSilence);
+            await renderKenBurnsClip(runId, item.imagePath, item.audio.filePath, clipPath, w, h, fps, clipDuration, zoomDirection, tailSilence);
           }
           log(
             runId,
@@ -134,11 +155,11 @@ export async function assembleVideo(
     if (xfadeChunks > 1 && clipInfos.length >= xfadeChunks * 3) {
       await concatWithCrossfadeChunked(runId, clipInfos, clipsDir, finalPath, transitionSec, fps);
     } else {
-      await concatWithCrossfade(clipInfos, finalPath, transitionSec, fps);
+      await concatWithCrossfade(runId, clipInfos, finalPath, transitionSec, fps);
       log(runId, "info", `Crossfade ${transitionSec}s across ${clipInfos.length} scenes`, { stage: "assemble" });
     }
   } else {
-    await concatSimple(clipInfos.map((c) => c.path), clipsDir, finalPath);
+    await concatSimple(runId, clipInfos.map((c) => c.path), clipsDir, finalPath);
   }
 
   log(runId, "success", `Final video: ${finalPath}`, { stage: "assemble" });
@@ -183,11 +204,22 @@ function estimateDuration(filePath: string): number {
  */
 export function probeDuration(filePath: string): Promise<number> {
   return new Promise((resolve) => {
+    // ffprobe can BLOCK indefinitely on a malformed/truncated mp4 (the callback
+    // never fires). Without this timer the awaiting render hangs forever before
+    // its own ffmpeg even starts. On timeout we fall back to the size estimate.
+    let settled = false;
+    const finish = (v: number) => {
+      if (settled) return;
+      settled = true;
+      resolve(v);
+    };
+    const timer = setTimeout(() => finish(estimateDuration(filePath)), ffprobeTimeoutMs());
     ffmpeg.ffprobe(filePath, (err, data) => {
-      if (err) return resolve(estimateDuration(filePath));
+      clearTimeout(timer);
+      if (err) return finish(estimateDuration(filePath));
       const d = data.format?.duration;
-      if (typeof d !== "number" || !isFinite(d)) return resolve(estimateDuration(filePath));
-      resolve(d);
+      if (typeof d !== "number" || !isFinite(d)) return finish(estimateDuration(filePath));
+      finish(d);
     });
   });
 }
@@ -198,10 +230,99 @@ export function probeDuration(filePath: string): Promise<number> {
  *  error on a missing [0:a]. Missing/failing ffprobe → false (safe: TTS only). */
 function hasAudioStream(filePath: string): Promise<boolean> {
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (v: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(v);
+    };
+    // Same anti-hang timer as probeDuration — a blocked ffprobe degrades to
+    // "no audio stream" (safe: TTS-only mix) instead of stalling the render.
+    const timer = setTimeout(() => finish(false), ffprobeTimeoutMs());
     ffmpeg.ffprobe(filePath, (err, data) => {
-      if (err || !data?.streams) return resolve(false);
-      resolve(data.streams.some((s) => s.codec_type === "audio"));
+      clearTimeout(timer);
+      if (err || !data?.streams) return finish(false);
+      finish(data.streams.some((s) => s.codec_type === "audio"));
     });
+  });
+}
+
+// ── Anti-hang ffmpeg wrapper ────────────────────────────────────────────────
+// Every render/concat/mux used to be `new Promise((res,rej)=>ffmpeg()...on('end')
+// .on('error')...save())` with NO timeout. If the child deadlocks (pipe stall),
+// blocks on a malformed input, or its completion event is lost, that Promise
+// never settles — it holds a pLimit slot and the outer Promise.all never
+// resolves, so assembly hangs SILENTLY until the user cancels (exactly what we
+// saw: clips #3/#4 never logged "done", no xfade pass, 5 min dead, then cancel).
+
+function ffprobeTimeoutMs(): number {
+  return Math.max(5_000, Number(getSetting("FFPROBE_TIMEOUT_MS") || "30000"));
+}
+function ffmpegStallMs(): number {
+  return Math.max(15_000, Number(getSetting("ASSEMBLE_FFMPEG_STALL_MS") || "120000"));
+}
+
+/**
+ * Run a fully-configured fluent-ffmpeg command to `outPath` with a STALL timeout:
+ * the timer resets on every progress/stderr tick, so a slow-but-working encode is
+ * never killed, but a child that goes silent for `stallMs` is SIGKILLed and the
+ * promise rejects. A rejection here is caught by the per-clip try/catch upstream,
+ * so a hung clip becomes a skipped clip and assembly proceeds — never an infinite
+ * hang. Logs the resolved ffmpeg command line (debug) and the stderr tail on
+ * failure so the exact blocking call is visible next time.
+ */
+function runFfmpegSave(
+  cmd: ffmpeg.FfmpegCommand,
+  outPath: string,
+  opts: { runId?: string; label: string; stallMs?: number }
+): Promise<void> {
+  const { runId, label } = opts;
+  const stallMs = opts.stallMs ?? ffmpegStallMs();
+  return new Promise<void>((resolve, reject) => {
+    let done = false;
+    let stderrTail = "";
+    let timer: ReturnType<typeof setTimeout>;
+    const arm = () => {
+      if (done) return; // never (re)arm after the promise has settled
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        if (runId) {
+          log(runId, "error", `[ffmpeg stall] ${label} — no progress for ${stallMs}ms, killing. stderr tail: ${stderrTail.slice(-400)}`, { stage: "assemble" });
+        }
+        try {
+          cmd.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+        reject(new Error(`ffmpeg stalled >${stallMs}ms (${label})`));
+      }, stallMs);
+    };
+    cmd
+      .on("start", (cl: string) => {
+        if (runId) log(runId, "debug", `[ffmpeg start] ${label}: ${cl.slice(0, 500)}`, { stage: "assemble" });
+        arm();
+      })
+      .on("progress", () => arm())
+      .on("stderr", (line: string) => {
+        stderrTail = (stderrTail + "\n" + line).slice(-1500);
+        arm();
+      })
+      .on("error", (err: Error) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        reject(new Error(`${err.message}${stderrTail ? ` | ffmpeg stderr: ${stderrTail.slice(-300)}` : ""}`));
+      })
+      .on("end", () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve();
+      })
+      .save(outPath);
+    arm(); // in case 'start' is delayed by spawn
   });
 }
 
@@ -295,6 +416,7 @@ export function extractLastFrame(videoPath: string, outPath: string): Promise<vo
  * direction = 'in' → 1.0 → 1.18, 'out' → 1.18 → 1.0.
  */
 function renderKenBurnsClip(
+  runId: string,
   imagePath: string,
   audioPath: string,
   outPath: string,
@@ -342,37 +464,33 @@ function renderKenBurnsClip(
   // Upscale the input ×2 so the zoom doesn't blur
   const filter = `scale=${w * 2}:${h * 2}:flags=lanczos,zoompan=z='${zoomExpr}':x='${xExpr}':y='${yExpr}':d=${totalFrames}:s=${w}x${h}:fps=${fps}`;
 
-  return new Promise((resolve, reject) => {
-    const cmd = ffmpeg()
-      .input(imagePath)
-      .inputOptions(["-loop 1"])
-      .input(audioPath)
-      .videoFilters(filter);
-    // Pad audio with silence at the end so consecutive scenes get a breath.
-    if (tailSilenceSec > 0) {
-      cmd.audioFilters(`apad=pad_dur=${tailSilenceSec.toFixed(3)}`);
-    }
-    cmd
-      .outputOptions([
-        `-r ${fps}`,
-        `-t ${durationSec.toFixed(3)}`,
-        "-c:v libx264",
-        "-preset veryfast",
-        "-crf 23",
-        "-pix_fmt yuv420p",
-        "-c:a aac",
-        "-b:a 192k",
-        "-movflags +faststart",
-      ])
-      .on("error", reject)
-      .on("end", () => resolve())
-      .save(outPath);
-  });
+  const cmd = ffmpeg()
+    .input(imagePath)
+    .inputOptions(["-loop 1"])
+    .input(audioPath)
+    .videoFilters(filter);
+  // Pad audio with silence at the end so consecutive scenes get a breath.
+  if (tailSilenceSec > 0) {
+    cmd.audioFilters(`apad=pad_dur=${tailSilenceSec.toFixed(3)}`);
+  }
+  cmd.outputOptions([
+    `-r ${fps}`,
+    `-t ${durationSec.toFixed(3)}`,
+    "-c:v libx264",
+    "-preset veryfast",
+    "-crf 23",
+    "-pix_fmt yuv420p",
+    "-c:a aac",
+    "-b:a 192k",
+    "-movflags +faststart",
+  ]);
+  return runFfmpegSave(cmd, outPath, { runId, label: `ken-burns ${path.basename(outPath)}` });
 }
 
 /** Static full-frame clip (no zoom/pan) — used for the intro stat card so its
  *  text never gets cropped by a Ken-Burns move. The image is already w×h. */
 function renderStaticClip(
+  runId: string,
   imagePath: string,
   audioPath: string,
   outPath: string,
@@ -383,31 +501,26 @@ function renderStaticClip(
   tailSilenceSec: number = 0
 ): Promise<void> {
   const filter = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=0x0e0f13,setsar=1,fps=${fps}`;
-  return new Promise((resolve, reject) => {
-    const cmd = ffmpeg()
-      .input(imagePath)
-      .inputOptions(["-loop 1"])
-      .input(audioPath)
-      .videoFilters(filter);
-    if (tailSilenceSec > 0) {
-      cmd.audioFilters(`apad=pad_dur=${tailSilenceSec.toFixed(3)}`);
-    }
-    cmd
-      .outputOptions([
-        `-r ${fps}`,
-        `-t ${durationSec.toFixed(3)}`,
-        "-c:v libx264",
-        "-preset veryfast",
-        "-crf 23",
-        "-pix_fmt yuv420p",
-        "-c:a aac",
-        "-b:a 192k",
-        "-movflags +faststart",
-      ])
-      .on("error", reject)
-      .on("end", () => resolve())
-      .save(outPath);
-  });
+  const cmd = ffmpeg()
+    .input(imagePath)
+    .inputOptions(["-loop 1"])
+    .input(audioPath)
+    .videoFilters(filter);
+  if (tailSilenceSec > 0) {
+    cmd.audioFilters(`apad=pad_dur=${tailSilenceSec.toFixed(3)}`);
+  }
+  cmd.outputOptions([
+    `-r ${fps}`,
+    `-t ${durationSec.toFixed(3)}`,
+    "-c:v libx264",
+    "-preset veryfast",
+    "-crf 23",
+    "-pix_fmt yuv420p",
+    "-c:a aac",
+    "-b:a 192k",
+    "-movflags +faststart",
+  ]);
+  return runFfmpegSave(cmd, outPath, { runId, label: `static ${path.basename(outPath)}` });
 }
 
 /** img2vid clip: render the Veo clip with its length matched to the TTS audio.
@@ -432,6 +545,7 @@ function renderStaticClip(
  *  UNDER the narration (Reign's "keep the TTS and the Veo sound together").
  */
 async function renderAnimatedClip(
+  runId: string,
   videoPath: string,
   audioPath: string,
   outPath: string,
@@ -472,9 +586,8 @@ async function renderAnimatedClip(
   // error on a missing [0:a]. Falls back to the TTS-only path exactly as before.
   const doMix = mixVeoPercent > 0 && (await hasAudioStream(videoPath));
 
-  return new Promise((resolve, reject) => {
-    const cmd = ffmpeg().input(videoPath).input(audioPath);
-
+  const cmd = ffmpeg().input(videoPath).input(audioPath);
+  {
     if (doMix) {
       const duck = Math.min(1, Math.max(0, mixVeoPercent / 100)).toFixed(3);
       // normalize=0 keeps our explicit volumes — amix's default divides by the
@@ -485,11 +598,12 @@ async function renderAnimatedClip(
         `[0:a]volume=${duck}[veoa]`,
         `[veoa][1:a]amix=inputs=2:duration=longest:normalize=0[amx]`,
       ];
-      let aout = "amx";
-      if (tailSilenceSec > 0) {
-        parts.push(`[amx]apad=pad_dur=${tailSilenceSec.toFixed(3)}[aout]`);
-        aout = "aout";
-      }
+      // Pad the mixed audio to the full clip length (plain apad + the -t cap
+      // below). When an animated clip is extended past its narration (Issue #2
+      // min-duration), the rest plays out under the ducked ambient / silence
+      // instead of an audio stream that ends before the video.
+      parts.push(`[amx]apad[aout]`);
+      const aout = "aout";
       cmd.complexFilter(parts).outputOptions([
         `-map [vout]`,
         `-map [${aout}]`,
@@ -505,9 +619,10 @@ async function renderAnimatedClip(
       ]);
     } else {
       cmd.videoFilters(videoFilter);
-      if (tailSilenceSec > 0) {
-        cmd.audioFilters(`apad=pad_dur=${tailSilenceSec.toFixed(3)}`);
-      }
+      // Pad the TTS audio to fill the clip (plain apad + the -t cap below), so an
+      // extended animated clip (Issue #2 min-duration) plays its motion out under
+      // trailing silence instead of ending when the short narration ends.
+      cmd.audioFilters(`apad`);
       cmd.outputOptions([
         // Explicit stream mapping — drops Veo's audio even if `mute` didn't work
         "-map", "0:v:0",
@@ -523,24 +638,23 @@ async function renderAnimatedClip(
         "-movflags +faststart",
       ]);
     }
+  }
 
-    cmd.on("error", reject).on("end", () => resolve()).save(outPath);
+  return runFfmpegSave(cmd, outPath, {
+    runId,
+    label: `img2vid ${path.basename(outPath)} (${doMix ? "mix" : "tts-only"}${durationSec > videoDur + 0.05 ? ", stretch+freeze" : ""})`,
   });
 }
 
 /** Simple stream-copy concat (no transitions). */
-function concatSimple(clipPaths: string[], clipsDir: string, finalPath: string): Promise<void> {
+function concatSimple(runId: string, clipPaths: string[], clipsDir: string, finalPath: string): Promise<void> {
   const listFile = path.join(clipsDir, "concat.txt");
   fs.writeFileSync(listFile, clipPaths.map((p) => `file '${p.replace(/\\/g, "/")}'`).join("\n"), "utf-8");
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(listFile)
-      .inputOptions(["-f concat", "-safe 0"])
-      .outputOptions(["-c copy"])
-      .on("error", reject)
-      .on("end", () => resolve())
-      .save(finalPath);
-  });
+  const cmd = ffmpeg()
+    .input(listFile)
+    .inputOptions(["-f concat", "-safe 0"])
+    .outputOptions(["-c copy"]);
+  return runFfmpegSave(cmd, finalPath, { runId, label: `concat ${clipPaths.length} clips` });
 }
 
 /**
@@ -633,7 +747,7 @@ async function concatWithCrossfadeChunked(
             clipsDir,
             `xfade_L${level}_${String(idx).padStart(3, "0")}.mp4`
           );
-          await concatWithCrossfade(chunkClips, chunkPath, fadeDur, fps);
+          await concatWithCrossfade(runId, chunkClips, chunkPath, fadeDur, fps);
           intermediateFiles.push(chunkPath);
           // Chunk duration = sum(clip durations) − (N−1) × fadeDur (each xfade overlaps)
           const chunkDuration =
@@ -666,7 +780,7 @@ async function concatWithCrossfadeChunked(
     // and the caller still chose chunked path, OR after a chain of pass-throughs).
     fs.copyFileSync(current[0].path, finalPath);
   } else {
-    await concatWithCrossfade(current, finalPath, fadeDur, fps);
+    await concatWithCrossfade(runId, current, finalPath, fadeDur, fps);
   }
 
   // Cleanup intermediate chunk files
@@ -683,6 +797,7 @@ async function concatWithCrossfadeChunked(
  * On each boundary, the last fadeDur seconds of clip N overlap the first fadeDur of clip N+1.
  */
 function concatWithCrossfade(
+  runId: string,
   clips: { path: string; durationSec: number }[],
   finalPath: string,
   fadeDur: number,
@@ -711,25 +826,19 @@ function concatWithCrossfade(
   // Strip trailing ;
   const filterComplex = (videoChain + audioChain).replace(/;$/, "");
 
-  return new Promise((resolve, reject) => {
-    cmd
-      .complexFilter(filterComplex)
-      .outputOptions([
-        `-map [${lastV}]`,
-        `-map [${lastA}]`,
-        `-r ${fps}`,
-        "-c:v libx264",
-        "-preset veryfast",
-        "-crf 22",
-        "-pix_fmt yuv420p",
-        "-c:a aac",
-        "-b:a 192k",
-        "-movflags +faststart",
-      ])
-      .on("error", reject)
-      .on("end", () => resolve())
-      .save(finalPath);
-  });
+  cmd.complexFilter(filterComplex).outputOptions([
+    `-map [${lastV}]`,
+    `-map [${lastA}]`,
+    `-r ${fps}`,
+    "-c:v libx264",
+    "-preset veryfast",
+    "-crf 22",
+    "-pix_fmt yuv420p",
+    "-c:a aac",
+    "-b:a 192k",
+    "-movflags +faststart",
+  ]);
+  return runFfmpegSave(cmd, finalPath, { runId, label: `xfade ${clips.length} clips` });
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -798,12 +907,12 @@ export async function assembleSingleShot(
         const durationSec = Math.max(0.1, (item.endMs - item.startMs) / 1000);
         try {
           if (item.videoPath) {
-            await renderSilentClip(item.videoPath, clipPath, w, h, fps, durationSec);
+            await renderSilentClip(runId, item.videoPath, clipPath, w, h, fps, durationSec);
           } else if (item.staticCard) {
-            await renderSilentStatic(item.imagePath, clipPath, w, h, fps, durationSec);
+            await renderSilentStatic(runId, item.imagePath, clipPath, w, h, fps, durationSec);
           } else {
             const direction: "in" | "out" = Math.random() < 0.5 ? "in" : "out";
-            await renderSilentKenBurns(item.imagePath, clipPath, w, h, fps, durationSec, direction);
+            await renderSilentKenBurns(runId, item.imagePath, clipPath, w, h, fps, durationSec, direction);
           }
           log(
             runId,
@@ -828,11 +937,11 @@ export async function assembleSingleShot(
   // Hard-concat the silent clips (identical params → stream copy), then mux the
   // ONE global voiceover over the whole thing.
   const silentConcat = path.join(outDir, "silent_concat.mp4");
-  await concatSimple(indexed.map((c) => c.path), clipsDir, silentConcat);
+  await concatSimple(runId, indexed.map((c) => c.path), clipsDir, silentConcat);
   log(runId, "info", `Concatenated ${indexed.length} silent clips into one track`, { stage: "assemble" });
 
   const finalPath = path.join(outDir, "final.mp4");
-  await muxAudioOntoVideo(silentConcat, globalAudioPath, finalPath);
+  await muxAudioOntoVideo(runId, silentConcat, globalAudioPath, finalPath);
   log(runId, "success", `Final video: ${finalPath}`, { stage: "assemble" });
   try { fs.unlinkSync(silentConcat); } catch {}
   return finalPath;
@@ -842,6 +951,7 @@ export async function assembleSingleShot(
  *  `durationSec`. Same policy as renderAnimatedClip (≤1.15× stretch, then
  *  last-frame freeze) but no audio — the voiceover joins later in the mux. */
 async function renderSilentClip(
+  runId: string,
   videoPath: string,
   outPath: string,
   w: number,
@@ -863,28 +973,25 @@ async function renderSilentClip(
       videoFilter = `${videoFilter},tpad=stop_mode=clone:stop_duration=${freezeNeeded.toFixed(3)}`;
     }
   }
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(videoPath)
-      .videoFilters(videoFilter)
-      .outputOptions([
-        "-an",
-        `-r ${fps}`,
-        `-t ${durationSec.toFixed(3)}`,
-        "-c:v libx264",
-        "-preset veryfast",
-        "-crf 23",
-        "-pix_fmt yuv420p",
-        "-movflags +faststart",
-      ])
-      .on("error", reject)
-      .on("end", () => resolve())
-      .save(outPath);
-  });
+  const cmd = ffmpeg()
+    .input(videoPath)
+    .videoFilters(videoFilter)
+    .outputOptions([
+      "-an",
+      `-r ${fps}`,
+      `-t ${durationSec.toFixed(3)}`,
+      "-c:v libx264",
+      "-preset veryfast",
+      "-crf 23",
+      "-pix_fmt yuv420p",
+      "-movflags +faststart",
+    ]);
+  return runFfmpegSave(cmd, outPath, { runId, label: `silent-clip ${path.basename(outPath)}` });
 }
 
 /** Silent full-frame static still (stat card) at an exact duration. */
 function renderSilentStatic(
+  runId: string,
   imagePath: string,
   outPath: string,
   w: number,
@@ -893,30 +1000,27 @@ function renderSilentStatic(
   durationSec: number
 ): Promise<void> {
   const filter = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=0x0e0f13,setsar=1,fps=${fps}`;
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(imagePath)
-      .inputOptions(["-loop 1"])
-      .videoFilters(filter)
-      .outputOptions([
-        "-an",
-        `-r ${fps}`,
-        `-t ${durationSec.toFixed(3)}`,
-        "-c:v libx264",
-        "-preset veryfast",
-        "-crf 23",
-        "-pix_fmt yuv420p",
-        "-movflags +faststart",
-      ])
-      .on("error", reject)
-      .on("end", () => resolve())
-      .save(outPath);
-  });
+  const cmd = ffmpeg()
+    .input(imagePath)
+    .inputOptions(["-loop 1"])
+    .videoFilters(filter)
+    .outputOptions([
+      "-an",
+      `-r ${fps}`,
+      `-t ${durationSec.toFixed(3)}`,
+      "-c:v libx264",
+      "-preset veryfast",
+      "-crf 23",
+      "-pix_fmt yuv420p",
+      "-movflags +faststart",
+    ]);
+  return runFfmpegSave(cmd, outPath, { runId, label: `silent-static ${path.basename(outPath)}` });
 }
 
 /** Silent Ken-Burns still (slow zoom + optional pan) at an exact duration —
  *  same look as renderKenBurnsClip but no audio track. */
 function renderSilentKenBurns(
+  runId: string,
   imagePath: string,
   outPath: string,
   w: number,
@@ -954,25 +1058,21 @@ function renderSilentKenBurns(
       break;
   }
   const filter = `scale=${w * 2}:${h * 2}:flags=lanczos,zoompan=z='${zoomExpr}':x='${xExpr}':y='${yExpr}':d=${totalFrames}:s=${w}x${h}:fps=${fps}`;
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(imagePath)
-      .inputOptions(["-loop 1"])
-      .videoFilters(filter)
-      .outputOptions([
-        "-an",
-        `-r ${fps}`,
-        `-t ${durationSec.toFixed(3)}`,
-        "-c:v libx264",
-        "-preset veryfast",
-        "-crf 23",
-        "-pix_fmt yuv420p",
-        "-movflags +faststart",
-      ])
-      .on("error", reject)
-      .on("end", () => resolve())
-      .save(outPath);
-  });
+  const cmd = ffmpeg()
+    .input(imagePath)
+    .inputOptions(["-loop 1"])
+    .videoFilters(filter)
+    .outputOptions([
+      "-an",
+      `-r ${fps}`,
+      `-t ${durationSec.toFixed(3)}`,
+      "-c:v libx264",
+      "-preset veryfast",
+      "-crf 23",
+      "-pix_fmt yuv420p",
+      "-movflags +faststart",
+    ]);
+  return runFfmpegSave(cmd, outPath, { runId, label: `silent-kenburns ${path.basename(outPath)}` });
 }
 
 /** Mux: copy video from `videoPath`, attach audio from `audioPath`. The
@@ -980,26 +1080,22 @@ function renderSilentKenBurns(
  *  slightly shorter (alignment drift / a skipped clip), hold the last frame so
  *  the narration is never cut; otherwise stream-copy the video (fast path). */
 async function muxAudioOntoVideo(
+  runId: string,
   videoPath: string,
   audioPath: string,
   outPath: string
 ): Promise<void> {
   const [videoDur, audioDur] = await Promise.all([probeDuration(videoPath), probeDuration(audioPath)]);
   const gap = audioDur - videoDur;
-  return new Promise((resolve, reject) => {
-    const cmd = ffmpeg().input(videoPath).input(audioPath);
-    const out: string[] = ["-map", "0:v:0", "-map", "1:a:0"];
-    if (gap > 0.15) {
-      cmd.videoFilters(`tpad=stop_mode=clone:stop_duration=${(gap + 0.5).toFixed(3)}`);
-      out.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p");
-    } else {
-      out.push("-c:v", "copy");
-    }
-    out.push("-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart");
-    cmd
-      .outputOptions(out)
-      .on("error", reject)
-      .on("end", () => resolve())
-      .save(outPath);
-  });
+  const cmd = ffmpeg().input(videoPath).input(audioPath);
+  const out: string[] = ["-map", "0:v:0", "-map", "1:a:0"];
+  if (gap > 0.15) {
+    cmd.videoFilters(`tpad=stop_mode=clone:stop_duration=${(gap + 0.5).toFixed(3)}`);
+    out.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p");
+  } else {
+    out.push("-c:v", "copy");
+  }
+  out.push("-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart");
+  cmd.outputOptions(out);
+  return runFfmpegSave(cmd, outPath, { runId, label: `mux ${path.basename(outPath)}` });
 }

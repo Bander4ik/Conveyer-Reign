@@ -1,12 +1,27 @@
 // Server-only module — runs once per dev server start to seed default settings/prompts.
 import { seedDefaults, getSetting, setSetting } from "./settings";
-import { seedPromptDefaults } from "./prompts";
+import { seedPromptDefaults, migrateLegacySpacePrompts } from "./prompts";
 
 let inited = false;
 export function ensureInit() {
   if (inited) return;
   seedDefaults();
   seedPromptDefaults();
+
+  // One-time migration: older installs seeded a space/astronomy scene_split +
+  // image_prompt into the DB, and seedPromptDefaults() only inserts when
+  // missing — so the new animal/wildlife defaults never reach them. Replace
+  // those stored prompts ONLY when they are the unmodified legacy space
+  // default (a user's custom edits don't match and are left alone). Gated by a
+  // flag so it runs once and never re-touches a prompt the user later edits.
+  if (getSetting("PROMPTS_ANIMAL_MIGRATION_DONE") !== "1") {
+    const migrated = migrateLegacySpacePrompts();
+    if (migrated.length > 0) {
+      // eslint-disable-next-line no-console
+      console.log(`[init] Migrated legacy space prompts to wildlife defaults: ${migrated.join(", ")}`);
+    }
+    setSetting("PROMPTS_ANIMAL_MIGRATION_DONE", "1");
+  }
 
   // One-time migration: the old ANIMATION_PROVIDER default was "off", which
   // meant the pipeline silently skipped img2vid and produced a Ken-Burns
